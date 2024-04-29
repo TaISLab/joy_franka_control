@@ -58,6 +58,8 @@ struct TeleopFrankaJoy::Impl
   std::map< std::string, std::map<std::string, double> > scale_JL_map; // Mapa que asocia el nombre de un eje con una escala asociada al movimiento
 
   bool sent_disable_msg; // Bandera para indicar si se ha enviado un mensaje de desactivación
+
+  geometry_msgs::PoseStamped franka_PoseStamped;
 };
 
 /**
@@ -160,7 +162,7 @@ void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstP
   }
   
   geometry_msgs::PoseStamped cmd_PoseStamped_msg;
-  
+
   cmd_PoseStamped_msg = franka_PoseStamped;
 
   geometry_msgs::Pose Pose_msg;
