@@ -1,17 +1,27 @@
-axis_linear:
-  x: 1
-  y: 0
-scale_linear:
+# axis_linear:
+#   x: 1
+#   y: 0
+# scale_linear:
+#   x: 0.5
+#   y: 0.5
+# scale_linear_turbo:
+#   x: 1.6
+#   y: 1.6
+# axis_angular:
+#   yaw: 3
+# scale_angular:
+#   yaw: 0.8
+# scale_angular_turbo:
+#   yaw: 1.2
+
+JL:
+  x: 0
+  y: 1
+scale_JL:
   x: 0.5
   y: 0.5
-scale_linear_turbo:
+scale_JL_turbo:
   x: 1.6
   y: 1.6
-axis_angular:
-  yaw: 3
-scale_angular:
-  yaw: 0.8
-scale_angular_turbo:
-  yaw: 1.2
 enable_button: 4
 enable_turbo_button: 5
