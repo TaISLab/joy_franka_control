@@ -42,9 +42,12 @@ namespace teleop_franka_joy
 struct TeleopFrankaJoy::Impl
 {
   void joyCallback(const sensor_msgs::Joy::ConstPtr& joy); // Función para manejar los mensajes del joystick
+  void frankaPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose);
   void sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::string& which_map); // Función para enviar comandos de PoseStamped
 
+
   ros::Subscriber joy_sub; // Subscriptor para el tema del joystick
+  ros::Subscriber franka_PoseStamped_sub;
   ros::Publisher cmd_PoseStamped_pub; // Publicador para enviar comandos de PoseStamped
 
   int enable_button; // Vble que activa el control
@@ -67,12 +70,9 @@ struct TeleopFrankaJoy::Impl
 TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 {
   pimpl_ = new Impl;
-
   pimpl_->cmd_PoseStamped_pub = nh->advertise<geometry_msgs::PoseStamped>("cmd_PoseStamped", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
-  
-  pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_); 
-  // Se crea un subscriptor ROS que se subscribirá al topic joy y publica mensajes de tipo sensor_msgs::Joy. 
-  // Cuando se recive un mensaje llama a la función callback.
+  pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_);
+  pimpl_->franka_PoseStamped_sub = nh->subscribe<geometry_msgs::PoseStamped>("franka_PoseStamped", 1, &TeleopFrankaJoy::Impl::frankaPoseCallback, pimpl_);
 
   nh_param->param<int>("enable_button", pimpl_->enable_button, 0); // Se obtiene el parámetro del enable_button del servidor de parámetros ROS, por defecto es 0.
   nh_param->param<int>("enable_turbo_button", pimpl_->enable_turbo_button, -1);
@@ -110,6 +110,8 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 }
 
 
+
+
 // Obtiene valores específicos del mensaje del joystick
 double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_map,
               const std::map<std::string, double>& scale_map, const std::string& fieldname)
@@ -138,23 +140,33 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
   return joy_msg->axes[axis_map.at(fieldname)] * scale_map.at(fieldname);
 }
 
+void TeleopFrankaJoy::Impl::frankaPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose)
+{
+  franka_PoseStamped = *pose;
+}
+
 // Envia los comandos de velocidad
 void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg,
                                          const std::string& which_map)
 {
-  /*
-    Método que envia un mensaje basado en los datos del joystick
-  */
 
+  static bool initial_pose_received = false;
+  static geometry_msgs::PoseStamped initial_pose;
 
-  // Initializes with zeros by default.
+  if (!initial_pose_received)
+  {
+    ROS_INFO("Waiting for initial pose from Franka...");
+    return;
+  }
+  
   geometry_msgs::PoseStamped cmd_PoseStamped_msg;
+  
+  cmd_PoseStamped_msg = franka_PoseStamped;
+
   geometry_msgs::Pose Pose_msg;
   geometry_msgs::Point Position_msg;
 
   static geometry_msgs::PoseStamped accumulated_pose;
-
-
 
   Position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
   Position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
