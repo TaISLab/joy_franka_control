@@ -68,7 +68,7 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 {
   pimpl_ = new Impl;
 
-  pimpl_->position_pub = nh->advertise<geometry_msgs::Twist>("cmd_posestamped", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo Twist en el topic cmd_posestamped
+  pimpl_->position_pub = nh->advertise<geometry_msgs::PoseStamped>("cmd_posestamped", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
   
   pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_); 
   // Se crea un subscriptor ROS que se subscribirá al topic joy y publica mensajes de tipo sensor_msgs::Joy. 
@@ -151,12 +151,16 @@ void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstP
 
   // Initializes with zeros by default.
   geometry_msgs::Point position_msg;
+  
+  position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x"); // Se obtiene el valor del eje x del joystick, escalandolo y asignandolo a la componente x del mensaje
+  position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
+  position_msg.z = getVal(joy_msg, JL_map, scale_JL_map[which_map], "z");
 
-  position_msg.JL.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x"); // Se obtiene el valor del eje x del joystick, escalandolo y asignandolo a la componente x del mensaje
-  position_msg.JL.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
-  position_msg.JL.z = getVal(joy_msg, JL_map, scale_JL_map[which_map], "z");
+  geometry_msgs::PoseStamped pose_stamped_msg;
 
-  position_pub.publish(position_msg); // Se publica el mensaje de velocidad en el topic cmd_posestamped
+  pose_stamped_msg.pose.position = position_msg;
+
+  position_pub.publish(pose_stamped_msg); // Se publica el mensaje de velocidad en el topic cmd_posestamped
   sent_disable_msg = false;
 }
 

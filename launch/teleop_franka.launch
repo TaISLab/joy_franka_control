@@ -2,7 +2,7 @@
 <launch>
   <arg name="joy_config" default="ps3" />
   <arg name="joy_dev" default="/dev/input/js0" />
-  <arg name="config_filepath" default="$(find joy_ros)/config/joy.config.yaml" />
+  <arg name="config_filepath" default="$(find joy_franka_control)/config/joy.config.yaml" />
   <arg name="joy_topic" default="joy" />
   
   <remap from="position" to="position_joy" />
