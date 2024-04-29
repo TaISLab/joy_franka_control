@@ -45,7 +45,7 @@ struct TeleopFrankaJoy::Impl
   void sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::string& which_map); // Función para enviar comandos de PoseStamped
 
   ros::Subscriber joy_sub; // Subscriptor para el tema del joystick
-  ros::Publisher position_pub; // Publicador para enviar comandos de PoseStamped
+  ros::Publisher cmd_PoseStamped_pub; // Publicador para enviar comandos de PoseStamped
 
   int enable_button; // Vble que activa el control
   int enable_turbo_button; //Vble que activa la velocidad turbo
@@ -68,7 +68,7 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 {
   pimpl_ = new Impl;
 
-  pimpl_->position_pub = nh->advertise<geometry_msgs::PoseStamped>("cmd_posestamped", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
+  pimpl_->cmd_PoseStamped_pub = nh->advertise<geometry_msgs::PoseStamped>("cmd_PoseStamped", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
   
   pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_); 
   // Se crea un subscriptor ROS que se subscribirá al topic joy y publica mensajes de tipo sensor_msgs::Joy. 
@@ -77,21 +77,19 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
   nh_param->param<int>("enable_button", pimpl_->enable_button, 0); // Se obtiene el parámetro del enable_button del servidor de parámetros ROS, por defecto es 0.
   nh_param->param<int>("enable_turbo_button", pimpl_->enable_turbo_button, -1);
 
-  if (nh_param->getParam("JL_x", pimpl_->JL_map))
+  if (nh_param->getParam("JL", pimpl_->JL_map))
   {
     // Obtiene los parámetros axis_lineal
-
-    nh_param->getParam("scale_JL_x", pimpl_->scale_JL_map["normal"]);
-    nh_param->getParam("scale_JL_x_turbo", pimpl_->scale_JL_map["turbo"]);
+    nh_param->getParam("scale_JL", pimpl_->scale_JL_map["normal"]);
+    nh_param->getParam("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]);
   }
   else
   {
     // Si no se especifican: se aplican estos por defecto
-    nh_param->param<int>("JL_x", pimpl_->JL_map["x"], 1);
-    nh_param->param<double>("scale_JL_x", pimpl_->scale_JL_map["normal"]["x"], 0.5);
-    nh_param->param<double>("scale_JL_x_turbo", pimpl_->scale_JL_map["turbo"]["x"], 1.0);
+    nh_param->param<int>("JL", pimpl_->JL_map["x"], 1);
+    nh_param->param<double>("scale_JL", pimpl_->scale_JL_map["normal"]["x"], 0.5);
+    nh_param->param<double>("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]["x"], 1.0);
   }
-  
   ROS_INFO_NAMED("TeleopFrankaJoy", "Teleop enable button %i.", pimpl_->enable_button); // Imprime por pantalla
   ROS_INFO_COND_NAMED(pimpl_->enable_turbo_button >= 0, "TeleopFrankaJoy", // Imprime por pantalla si la condición es verdadera
       "Turbo on button %i.", pimpl_->enable_turbo_button);
@@ -145,22 +143,32 @@ void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstP
                                          const std::string& which_map)
 {
   /*
-    Método que envia un mensaje de velocidad asado en los datos del joystick
+    Método que envia un mensaje basado en los datos del joystick
   */
 
 
   // Initializes with zeros by default.
-  geometry_msgs::Point position_msg;
+  geometry_msgs::PoseStamped cmd_PoseStamped_msg;
+  geometry_msgs::Pose Pose_msg;
+  geometry_msgs::Point Position_msg;
+
+  static geometry_msgs::PoseStamped accumulated_pose;
+
+
+
+  Position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
+  Position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
   
-  position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x"); // Se obtiene el valor del eje x del joystick, escalandolo y asignandolo a la componente x del mensaje
-  position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
-  position_msg.z = getVal(joy_msg, JL_map, scale_JL_map[which_map], "z");
 
-  geometry_msgs::PoseStamped pose_stamped_msg;
+  // cmd_PoseStamped_msg.pose.position.x = Position_msg.x;
+  // cmd_PoseStamped_msg.pose.position.y = Position_msg.y;
 
-  pose_stamped_msg.pose.position = position_msg;
+  accumulated_pose.pose.position.x += Position_msg.x;
+  accumulated_pose.pose.position.y += Position_msg.y;
 
-  position_pub.publish(pose_stamped_msg); // Se publica el mensaje de velocidad en el topic cmd_posestamped
+  // cmd_PoseStamped_pub.publish(cmd_PoseStamped_msg);
+  cmd_PoseStamped_pub.publish(accumulated_pose);
+
   sent_disable_msg = false;
 }
 
@@ -187,8 +195,8 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
     if (!sent_disable_msg)
     {
       // Initializes with zeros by default.
-      geometry_msgs::Point position_msg;
-      position_pub.publish(position_msg);
+      geometry_msgs::PoseStamped cmd_PoseStamped_msg;
+      cmd_PoseStamped_pub.publish(cmd_PoseStamped_msg);
       sent_disable_msg = true;
     }
   }
