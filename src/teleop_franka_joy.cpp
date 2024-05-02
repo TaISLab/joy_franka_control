@@ -22,13 +22,13 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCL
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "geometry_msgs/PoseStamped.h"
 #include "ros/ros.h"
-#include "sensor_msgs/Joy.h"
-#include "teleop_franka_joy/teleop_franka_joy.h"
-
 #include <map>
 #include <string>
+
+#include "teleop_franka_joy/teleop_franka_joy.h"
+#include "geometry_msgs/PoseStamped.h"
+#include "sensor_msgs/Joy.h"
 
 // Definir un namespace evita conflictos de nombres con otras partes del código o blibliotecas externas
 namespace teleop_franka_joy
@@ -41,11 +41,11 @@ namespace teleop_franka_joy
  */
 struct TeleopFrankaJoy::Impl
 {
-  void joyCallback(const sensor_msgs::Joy::ConstPtr& joy); // Función para manejar los mensajes del joystick
-  void sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::string& which_map); // Función para enviar comandos de PoseStamped
+  void joyCallback(const sensor_msgs::Joy::ConstPtr& joy); // Función encargada de manejar los mensajes del joystick
+  void sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::string& which_map); // Función encargada de calcular los valores de PoseStamped
 
-  ros::Subscriber joy_sub; // Subscriptor para el tema del joystick
-  ros::Publisher cmd_PoseStamped_pub; // Publicador para enviar comandos de PoseStamped
+  ros::Subscriber joy_sub; // Subscriptor a joystick
+  ros::Publisher cmd_PoseStamped_pub; // Publicador de PoseStamped
 
   int enable_button; // Vble que activa el control
   int enable_turbo_button; //Vble que activa la velocidad turbo
@@ -67,19 +67,15 @@ struct TeleopFrankaJoy::Impl
 TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 {
   pimpl_ = new Impl;
-
   pimpl_->cmd_PoseStamped_pub = nh->advertise<geometry_msgs::PoseStamped>("cmd_PoseStamped", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
-  
-  pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_); 
-  // Se crea un subscriptor ROS que se subscribirá al topic joy y publica mensajes de tipo sensor_msgs::Joy. 
-  // Cuando se recive un mensaje llama a la función callback.
+  pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_); // Cuando se recive un mensaje llama a la función callback.
 
   nh_param->param<int>("enable_button", pimpl_->enable_button, 0); // Se obtiene el parámetro del enable_button del servidor de parámetros ROS, por defecto es 0.
   nh_param->param<int>("enable_turbo_button", pimpl_->enable_turbo_button, -1);
 
   if (nh_param->getParam("JL", pimpl_->JL_map))
   {
-    // Obtiene los parámetros axis_lineal
+    // Obtiene los parámetros
     nh_param->getParam("scale_JL", pimpl_->scale_JL_map["normal"]);
     nh_param->getParam("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]);
   }
@@ -103,12 +99,10 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 
     ROS_INFO_COND_NAMED(pimpl_->enable_turbo_button >= 0, "TeleopFrankaJoy",
         "Turbo for JL axis %s is scale %f.", it->first.c_str(), pimpl_->scale_JL_map["turbo"][it->first]);
-
   }
 
   pimpl_->sent_disable_msg = false; // Establece el valor de la vble sent_disable_msg en false
 }
-
 
 // Obtiene valores específicos del mensaje del joystick
 double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_map,
@@ -138,40 +132,22 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
   return joy_msg->axes[axis_map.at(fieldname)] * scale_map.at(fieldname);
 }
 
-// Envia los comandos de velocidad
+// Envia los comandos de PoseStamped
 void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg,
                                          const std::string& which_map)
 {
-  /*
-    Método que envia un mensaje basado en los datos del joystick
-  */
-
-
-  // Initializes with zeros by default.
-  geometry_msgs::PoseStamped cmd_PoseStamped_msg;
-  geometry_msgs::Pose Pose_msg;
   geometry_msgs::Point Position_msg;
-
   static geometry_msgs::PoseStamped accumulated_pose;
-
-
 
   Position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
   Position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
-  
-
-  // cmd_PoseStamped_msg.pose.position.x = Position_msg.x;
-  // cmd_PoseStamped_msg.pose.position.y = Position_msg.y;
 
   accumulated_pose.pose.position.x += Position_msg.x;
   accumulated_pose.pose.position.y += Position_msg.y;
 
-  // cmd_PoseStamped_pub.publish(cmd_PoseStamped_msg);
   cmd_PoseStamped_pub.publish(accumulated_pose);
-
   sent_disable_msg = false;
 }
-
 
 // Esta función se llama cada vez que se recibe un mensjae del joystick. Decide que tipo de comando 
 // de velocidad mandar al robot (normal o turbo) o si detener el movimiento del robot
@@ -188,21 +164,7 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
   {
     sendCmdPoseStampedMsg(joy_msg, "normal");
   }
-  else
-  {
-    // When enable button is released, immediately send a single no-motion command
-    // in order to stop the robot.
-    if (!sent_disable_msg)
-    {
-      // Initializes with zeros by default.
-      geometry_msgs::PoseStamped cmd_PoseStamped_msg;
-      cmd_PoseStamped_pub.publish(cmd_PoseStamped_msg);
-      sent_disable_msg = true;
-    }
-  }
 
 }
 
-}  // namespace teleop_franka_joy
-
-// No hay main porque se asume que será proporcionado por un nodo ROS separado que instanciará y ejecutará este nodo
+} // namespace teleop_franka_joy
