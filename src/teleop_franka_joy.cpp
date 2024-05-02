@@ -43,8 +43,10 @@ struct TeleopFrankaJoy::Impl
 {
   void joyCallback(const sensor_msgs::Joy::ConstPtr& joy); // Función encargada de manejar los mensajes del joystick
   void sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::string& which_map); // Función encargada de calcular los valores de PoseStamped
+  void equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg);
 
   ros::Subscriber joy_sub; // Subscriptor a joystick
+  ros::Subscriber equilibrium_pose_sub;
   ros::Publisher cmd_PoseStamped_pub; // Publicador de PoseStamped
 
   int enable_button; // Vble que activa el control
@@ -69,6 +71,9 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
   pimpl_ = new Impl;
   pimpl_->cmd_PoseStamped_pub = nh->advertise<geometry_msgs::PoseStamped>("cmd_PoseStamped", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
   pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_); // Cuando se recive un mensaje llama a la función callback.
+  
+  pimpl_->equilibrium_pose_sub= nh->subscribe<geometry_msgs::PoseStamped>( 
+      "/cartesian_impedance_example_controller/equilibrium_pose", 1, &TeleopFrankaJoy::Impl::equilibriumPoseCallback, pimpl_);
 
   nh_param->param<int>("enable_button", pimpl_->enable_button, 0); // Se obtiene el parámetro del enable_button del servidor de parámetros ROS, por defecto es 0.
   nh_param->param<int>("enable_turbo_button", pimpl_->enable_turbo_button, -1);
@@ -130,6 +135,17 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
 
   // Retorna el valor del eje especificado por fieldname en joy_msg, escalado por el valor asociado con fieldname en scale_map
   return joy_msg->axes[axis_map.at(fieldname)] * scale_map.at(fieldname);
+}
+
+// Agrega la suscripción al topic equilibrium_pose
+void TeleopFrankaJoy::Impl::equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg)
+{
+
+  // Imprime la posición y orientación recibida
+  ROS_INFO("Equilibrium Pose RCO - Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+            msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,
+            msg->pose.orientation.x, msg->pose.orientation.y, msg->pose.orientation.z, msg->pose.orientation.w);
+  
 }
 
 // Envia los comandos de PoseStamped

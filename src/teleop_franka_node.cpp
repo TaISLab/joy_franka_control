@@ -29,7 +29,6 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSI
 int main(int argc, char *argv[])
 {
   ros::init(argc, argv, "teleop_franka_joy_node");
-
   ros::NodeHandle nh(""), nh_param("~");
   teleop_franka_joy::TeleopFrankaJoy joy_teleop(&nh, &nh_param);
 
