@@ -51,12 +51,15 @@ struct TeleopFrankaJoy::Impl
 
   int enable_button; // Vble que activa el control
   int enable_turbo_button; //Vble que activa la velocidad turbo
+  bool sent_disable_msg; // Bandera para indicar si se ha enviado un mensaje de desactivación
+  bool received_equilibrium_pose;
+  geometry_msgs::PoseStamped initial_pose;
  
   // Creación de un map por cada joystick:
   std::map<std::string, int> JL_map; // Mapa que asigna el nombre de JL_map a un eje determinado de mando
   std::map< std::string, std::map<std::string, double> > scale_JL_map; // Mapa que asocia el nombre de un eje con una escala asociada al movimiento
 
-  bool sent_disable_msg; // Bandera para indicar si se ha enviado un mensaje de desactivación
+  
 };
 
 /**
@@ -140,9 +143,11 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
 // Agrega la suscripción al topic equilibrium_pose
 void TeleopFrankaJoy::Impl::equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg)
 {
+  received_equilibrium_pose=true;
+  initial_pose = *msg;
 
   // Imprime la posición y orientación recibida
-  ROS_INFO("Equilibrium Pose RCO - Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+  ROS_INFO("Equilibrium Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
             msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,
             msg->pose.orientation.x, msg->pose.orientation.y, msg->pose.orientation.z, msg->pose.orientation.w);
   
@@ -152,8 +157,9 @@ void TeleopFrankaJoy::Impl::equilibriumPoseCallback(const geometry_msgs::PoseSta
 void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg,
                                          const std::string& which_map)
 {
+  
   geometry_msgs::Point Position_msg;
-  static geometry_msgs::PoseStamped accumulated_pose;
+  static geometry_msgs::PoseStamped accumulated_pose = initial_pose;
 
   Position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
   Position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
