@@ -73,6 +73,9 @@ struct TeleopFrankaJoy::Impl
 TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 {
   pimpl_ = new Impl;
+
+  
+
   pimpl_->cmd_PoseStamped_pub = nh->advertise<geometry_msgs::PoseStamped>("/cartesian_impedance_example_controller/equilibrium_pose", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
   pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_); // Cuando se recive un mensaje llama a la función callback.
   
@@ -111,6 +114,8 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
   }
 
   pimpl_->sent_disable_msg = false; // Establece el valor de la vble sent_disable_msg en false
+  pimpl_->received_equilibrium_pose = false;
+  
 }
 
 // Obtiene valores específicos del mensaje del joystick
@@ -144,51 +149,45 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
 // Agrega la suscripción al topic equilibrium_pose
 void TeleopFrankaJoy::Impl::equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg)
 {
-  received_equilibrium_pose=true;
-  initial_pose = *msg;
+  if (received_equilibrium_pose == false){
 
-  // Imprime la posición y orientación recibida
-  ROS_INFO("Equilibrium Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
-            msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,
-            msg->pose.orientation.x, msg->pose.orientation.y, msg->pose.orientation.z, msg->pose.orientation.w);
-  
+    ROS_INFO("Me subscribo a equilibriumPose");
+    received_equilibrium_pose=true;
+    initial_pose = *msg;
+
+    // Imprime la posición y orientación recibida
+    ROS_INFO("Subscripcion: Equilibrium Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+              msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,
+              msg->pose.orientation.x, msg->pose.orientation.y, msg->pose.orientation.z, msg->pose.orientation.w);
+
+    // equilibrium_pose_sub.shutdown();
+  }
+
 }
 
 // Envia los comandos de PoseStamped
 void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg,
                                          const std::string& which_map)
 {
-  geometry_msgs::PoseStamped accumulated_pose;
-
-  if (entra_una_vez == false && received_equilibrium_pose == true){
-    entra_una_vez==true;
-    ROS_INFO("Entra al mutex");
-    accumulated_pose = initial_pose;
-  }
-
-  if (entra_una_vez == true) {
-
+  geometry_msgs::PoseStamped initial_pose_local = initial_pose;
   geometry_msgs::Point Position_msg;
-  // static geometry_msgs::PoseStamped accumulated_pose;
 
   Position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
   Position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
 
-  accumulated_pose.pose.position.x += Position_msg.x;
-  accumulated_pose.pose.position.y += Position_msg.y;
+  initial_pose_local.pose.position.x += Position_msg.x;
+  initial_pose_local.pose.position.y += Position_msg.y;
 
   ROS_INFO("Acumulation Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
-            accumulated_pose.pose.position.x, accumulated_pose.pose.position.y, accumulated_pose.pose.position.z,
-            accumulated_pose.pose.orientation.x, accumulated_pose.pose.orientation.y, accumulated_pose.pose.orientation.z, accumulated_pose.pose.orientation.w);
+            initial_pose_local.pose.position.x, initial_pose_local.pose.position.y, initial_pose_local.pose.position.z,
+            initial_pose_local.pose.orientation.x, initial_pose_local.pose.orientation.y, initial_pose_local.pose.orientation.z, initial_pose_local.pose.orientation.w);
 
-
-  cmd_PoseStamped_pub.publish(accumulated_pose);
+  cmd_PoseStamped_pub.publish(initial_pose_local);
+  initial_pose = initial_pose_local;
   sent_disable_msg = false;
 
   }
 
-
-}
 
 // Esta función se llama cada vez que se recibe un mensjae del joystick. Decide que tipo de comando 
 // de velocidad mandar al robot (normal o turbo) o si detener el movimiento del robot
@@ -207,10 +206,13 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
   }
   else
   {
-    // When enable button is released, immediately send a single no-motion command
-    // in order to stop the robot.
+    // When enable button is released
     if (!sent_disable_msg)
     {
+      ROS_INFO("Repose Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+            initial_pose.pose.position.x, initial_pose.pose.position.y, initial_pose.pose.position.z,
+            initial_pose.pose.orientation.x, initial_pose.pose.orientation.y, initial_pose.pose.orientation.z, initial_pose.pose.orientation.w);
+
       cmd_PoseStamped_pub.publish(initial_pose);
       sent_disable_msg = true;
     }
