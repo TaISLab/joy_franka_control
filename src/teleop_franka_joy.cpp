@@ -53,6 +53,7 @@ struct TeleopFrankaJoy::Impl
   int enable_turbo_button; //Vble que activa la velocidad turbo
   bool sent_disable_msg; // Bandera para indicar si se ha enviado un mensaje de desactivación
   bool received_equilibrium_pose;
+  bool entra_una_vez;
   geometry_msgs::PoseStamped initial_pose;
  
   // Creación de un map por cada joystick:
@@ -72,7 +73,7 @@ struct TeleopFrankaJoy::Impl
 TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 {
   pimpl_ = new Impl;
-  pimpl_->cmd_PoseStamped_pub = nh->advertise<geometry_msgs::PoseStamped>("cmd_PoseStamped", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
+  pimpl_->cmd_PoseStamped_pub = nh->advertise<geometry_msgs::PoseStamped>("/cartesian_impedance_example_controller/equilibrium_pose", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
   pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_); // Cuando se recive un mensaje llama a la función callback.
   
   pimpl_->equilibrium_pose_sub= nh->subscribe<geometry_msgs::PoseStamped>( 
@@ -158,14 +159,24 @@ void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstP
                                          const std::string& which_map)
 {
   
+  if (entra_una_vez == false && received_equilibrium_pose == true){
+    entra_una_vez==true;
+     geometry_msgs::PoseStamped accumulated_pose = initial_pose;
+  }
+  
   geometry_msgs::Point Position_msg;
-  static geometry_msgs::PoseStamped accumulated_pose = initial_pose;
+  static geometry_msgs::PoseStamped accumulated_pose;
 
   Position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
   Position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
 
   accumulated_pose.pose.position.x += Position_msg.x;
   accumulated_pose.pose.position.y += Position_msg.y;
+
+  ROS_INFO("Acumulation Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+            accumulated_pose.pose.position.x, accumulated_pose.pose.position.y, accumulated_pose.pose.position.z,
+            accumulated_pose.pose.orientation.x, accumulated_pose.pose.orientation.y, accumulated_pose.pose.orientation.z, accumulated_pose.pose.orientation.w);
+
 
   cmd_PoseStamped_pub.publish(accumulated_pose);
   sent_disable_msg = false;
