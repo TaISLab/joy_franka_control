@@ -17,12 +17,17 @@
 JL:
   x: 1
   y: 0
+  z: 4
 scale_JL: # range of movement
-  x: 0.1
-  y: 0.1
+  x: 0.5
+  y: 0.5
+  z: 0.5
 scale_JL_turbo:
   x: 1
   y: 1
+  z: 1
+
+change_z_button: 0
 enable_button: 4
 enable_turbo_button: 5
 orientation_button: 9

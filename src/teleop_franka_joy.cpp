@@ -50,11 +50,11 @@ struct TeleopFrankaJoy::Impl
   ros::Subscriber equilibrium_pose_sub;
   ros::Publisher cmd_PoseStamped_pub; // Publicador de PoseStamped
 
+  geometry_msgs::PoseStamped initial_pose;
   int enable_button; // Variable que activa el control
   int enable_turbo_button; //Variable que activa la velocidad turbo
   bool sent_disable_msg; // Variable para indicar si se ha enviado un mensaje de desactivación
   bool received_equilibrium_pose;
-  geometry_msgs::PoseStamped initial_pose;
   int orientation_button;
   int home_button;
 
@@ -64,6 +64,11 @@ struct TeleopFrankaJoy::Impl
   // Creación de un map por cada joystick:
   std::map<std::string, int> JL_map; // Mapa que asigna el nombre de JL_map a un eje determinado de mando
   std::map< std::string, std::map<std::string, double> > scale_JL_map; // Mapa que asocia el nombre de un eje con una escala asociada al movimiento
+
+  // Map para control de altura
+  std::map< std::string, double> scale_Z_map;
+  int change_z_button;
+  bool mov_z_arriba;
 
 };
 
@@ -85,20 +90,19 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
   nh_param->param<int>("enable_turbo_button", pimpl_->enable_turbo_button, -1);
   nh_param->param<int>("orientation_button", pimpl_->orientation_button, -1); // Antes 8
   nh_param->param<int>("home_button", pimpl_->home_button, -1);
+  nh_param->param<int>("change_z_button", pimpl_->change_z_button, -1);
 
-  if (nh_param->getParam("JL", pimpl_->JL_map))
+  if (nh_param->getParam("JL", pimpl_->JL_map)) // Obtiene los parámetros
   {
-    // Obtiene los parámetros
     nh_param->getParam("scale_JL", pimpl_->scale_JL_map["normal"]);
     nh_param->getParam("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]);
   }
-  else
-  {
-    // Si no se especifican: se aplican estos por defecto
-    nh_param->param<int>("JL", pimpl_->JL_map["x"], 1);
-    nh_param->param<double>("scale_JL", pimpl_->scale_JL_map["normal"]["x"], 0.5);
-    nh_param->param<double>("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]["x"], 1.0);
-  }
+  // else // Si no se especifican: se aplican estos por defecto
+  // {
+  //   nh_param->param<int>("JL", pimpl_->JL_map["x"], 1);
+  //   nh_param->param<double>("scale_JL", pimpl_->scale_JL_map["normal"]["x"], 0.5);
+  //   nh_param->param<double>("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]["x"], 1.0);
+  // }
 
   ROS_INFO_NAMED("TeleopFrankaJoy", "Teleop enable button %i.", pimpl_->enable_button); // Imprime por pantalla
   ROS_INFO_COND_NAMED(pimpl_->enable_turbo_button >= 0, "TeleopFrankaJoy", // Imprime por pantalla si la condición es verdadera
@@ -118,8 +122,6 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
   pimpl_->sent_disable_msg = false; // Establece el valor de la vble sent_disable_msg en false
   pimpl_->received_equilibrium_pose = false;
 
-  
-  
 }
 
 // Obtiene valores específicos del mensaje del joystick
@@ -166,10 +168,13 @@ void TeleopFrankaJoy::Impl::equilibriumPoseCallback(const geometry_msgs::PoseSta
               msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,
               msg->pose.orientation.x, msg->pose.orientation.y, msg->pose.orientation.z, msg->pose.orientation.w);
     mtx.unlock();
-    
   }
-
 }
+
+double applyLimits(double value, double min_limit, double max_limit){
+  return std::min(std::max(value, min_limit), max_limit);
+}
+
 
 // Función del publicador: envia los comandos de PoseStamped
 void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg,
@@ -178,11 +183,13 @@ void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstP
   geometry_msgs::PoseStamped initial_pose_local = initial_pose;
   geometry_msgs::Point Position_msg;
 
-  Position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
-  Position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
+  Position_msg.x = initial_pose_local.pose.position.x + getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
+  Position_msg.y = initial_pose_local.pose.position.y + getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
+  Position_msg.z = initial_pose_local.pose.position.z + getVal(joy_msg, JL_map, scale_JL_map[which_map], "z");
 
-  initial_pose_local.pose.position.x += Position_msg.x;
-  initial_pose_local.pose.position.y += Position_msg.y;
+  initial_pose_local.pose.position.x = applyLimits(Position_msg.x, -15, 15);
+  initial_pose_local.pose.position.y = applyLimits(Position_msg.y, -15, 15);
+  initial_pose_local.pose.position.z = applyLimits(Position_msg.z, -5, 10);
 
   ROS_INFO("Desired Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
             initial_pose_local.pose.position.x, initial_pose_local.pose.position.y, initial_pose_local.pose.position.z,
@@ -194,7 +201,7 @@ void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstP
   mtx.unlock();
   cmd_PoseStamped_pub.publish(initial_pose);
 
-  }
+}
 
 
 // Esta función se llama cada vez que se recibe un mensjae del joystick. Decide que tipo de comando 
@@ -245,10 +252,7 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
   {
     sendCmdPoseStampedMsg(joy_msg, "normal");
   }
-  else
-  {
-    // When enable button is released
-    if (!sent_disable_msg)
+  else if (!sent_disable_msg) // When enable button is released
     {
       ROS_INFO("Repose Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
             initial_pose.pose.position.x, initial_pose.pose.position.y, initial_pose.pose.position.z,
@@ -258,6 +262,4 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
       sent_disable_msg = true;
     }
 }
-}
-
 } // namespace teleop_franka_joy
