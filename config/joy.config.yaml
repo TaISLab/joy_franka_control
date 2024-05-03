@@ -16,7 +16,7 @@
 
 JL:
   x: 1
-  y: 
+  y: 0
 scale_JL: # range of movement
   x: 1
   y: 1
