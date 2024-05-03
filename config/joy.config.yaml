@@ -15,13 +15,13 @@
 #   yaw: 1.2
 
 JL:
-  x: 0
+  x: 1
+  y: 
+scale_JL: # range of movement
+  x: 1
   y: 1
-scale_JL:
-  x: 0.1
-  y: 0.1
 scale_JL_turbo:
-  x: 1.6
-  y: 1.6
+  x: 10
+  y: 10
 enable_button: 4
 enable_turbo_button: 5

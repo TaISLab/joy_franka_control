@@ -162,7 +162,8 @@ void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstP
 
   if (entra_una_vez == false && received_equilibrium_pose == true){
     entra_una_vez==true;
-     geometry_msgs::PoseStamped accumulated_pose = initial_pose;
+    ROS_INFO("Entra al mutex");
+    accumulated_pose = initial_pose;
   }
 
   if (entra_una_vez == true) {
@@ -204,7 +205,17 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
   {
     sendCmdPoseStampedMsg(joy_msg, "normal");
   }
-
+//   else
+//   {
+//     // When enable button is released, immediately send a single no-motion command
+//     // in order to stop the robot.
+//     if (!sent_disable_msg)
+//     {
+//       // Initializes with zeros by default.
+//       geometry_msgs::Point position_msg;
+//       position_pub.publish(position_msg);
+//       sent_disable_msg = true;
+//     }
 }
 
 } // namespace teleop_franka_joy
