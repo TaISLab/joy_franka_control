@@ -25,3 +25,5 @@ scale_JL_turbo:
   y: 1
 enable_button: 4
 enable_turbo_button: 5
+orientation_button: 9
+home_button: 8
