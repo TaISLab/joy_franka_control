@@ -158,14 +158,17 @@ void TeleopFrankaJoy::Impl::equilibriumPoseCallback(const geometry_msgs::PoseSta
 void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg,
                                          const std::string& which_map)
 {
-  
+  geometry_msgs::PoseStamped accumulated_pose;
+
   if (entra_una_vez == false && received_equilibrium_pose == true){
     entra_una_vez==true;
      geometry_msgs::PoseStamped accumulated_pose = initial_pose;
   }
-  
+
+  if (entra_una_vez == true) {
+
   geometry_msgs::Point Position_msg;
-  static geometry_msgs::PoseStamped accumulated_pose;
+  // static geometry_msgs::PoseStamped accumulated_pose;
 
   Position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
   Position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
@@ -180,6 +183,10 @@ void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstP
 
   cmd_PoseStamped_pub.publish(accumulated_pose);
   sent_disable_msg = false;
+
+  }
+
+
 }
 
 // Esta función se llama cada vez que se recibe un mensjae del joystick. Decide que tipo de comando 
