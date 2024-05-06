@@ -41,32 +41,39 @@ namespace teleop_franka_joy
  */
 struct TeleopFrankaJoy::Impl
 {
-  
+  // Members functions
   void joyCallback(const sensor_msgs::Joy::ConstPtr& joy); // Función encargada de manejar los mensajes del joystick
   void sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::string& which_map); // Función encargada de calcular los valores de PoseStamped
   void equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg);
+  void ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::string& which_map); // Función encargada de subir y bajar la velocidad
 
-  ros::Subscriber joy_sub; // Subscriptor a joystick
-  ros::Subscriber equilibrium_pose_sub;
-  ros::Publisher cmd_PoseStamped_pub; // Publicador de PoseStamped
+  // ROS subscribers and publisher
+  ros::Subscriber joy_sub;
+  ros::Subscriber equilibrium_pose_sub; 
+  ros::Publisher cmd_PoseStamped_pub;
 
-  geometry_msgs::PoseStamped initial_pose;
-  int enable_button; // Variable que activa el control
-  int enable_turbo_button; //Variable que activa la velocidad turbo
+
+  geometry_msgs::PoseStamped equilibrium_pose;
+  float Delta_t = 0.01; // Tiempo en segundo
+  float reaction_t = 0.5; // Tiempo en segundo
+
+
+  int enable_mov_position; // Variable que activa el control
+  int enable_mov_orientation; //Variable que activa la velocidad angular
   bool sent_disable_msg; // Variable para indicar si se ha enviado un mensaje de desactivación
   bool received_equilibrium_pose;
   int orientation_button;
   int home_button;
+  int increment_vel;
+  int decrement_vel;
 
   // Exclusión mutua
   std::mutex mtx;
  
   // Creación de un map por cada joystick:
-  std::map<std::string, int> JL_map; // Mapa que asigna el nombre de JL_map a un eje determinado de mando
+  std::map<std::string, int> position_map; // Mapa que asigna el nombre de position_map a un eje determinado de mando
   std::map< std::string, std::map<std::string, double> > scale_JL_map; // Mapa que asocia el nombre de un eje con una escala asociada al movimiento
 
-  // Map para control de altura
-  std::map< std::string, double> scale_Z_map;
   int change_z_button;
   bool mov_z_arriba;
 
@@ -86,37 +93,37 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
   pimpl_->equilibrium_pose_sub= nh->subscribe<geometry_msgs::PoseStamped>( 
       "/cartesian_impedance_example_controller/equilibrium_pose", 1, &TeleopFrankaJoy::Impl::equilibriumPoseCallback, pimpl_);
 
-  nh_param->param<int>("enable_button", pimpl_->enable_button, 0); // Se obtiene el parámetro del enable_button del servidor de parámetros ROS, por defecto es 0.
-  nh_param->param<int>("enable_turbo_button", pimpl_->enable_turbo_button, -1);
+  // Mapear botones
+  nh_param->param<int>("enable_mov_position", pimpl_->enable_mov_position, 0); // Se obtiene el parámetro del enable_mov_position del servidor de parámetros ROS, por defecto es 0.
+  nh_param->param<int>("enable_mov_orientation", pimpl_->enable_mov_orientation, -1);
   nh_param->param<int>("orientation_button", pimpl_->orientation_button, -1); // Antes 8
   nh_param->param<int>("home_button", pimpl_->home_button, -1);
   nh_param->param<int>("change_z_button", pimpl_->change_z_button, -1);
 
-  if (nh_param->getParam("JL", pimpl_->JL_map)) // Obtiene los parámetros
+  nh_param->param<int>("increment_velocity", pimpl_->increment_vel, -1);
+  nh_param->param<int>("decrement_velocity", pimpl_->decrement_vel, -1);
+
+
+  if (nh_param->getParam("JL", pimpl_->position_map)) // Obtiene los parámetros
   {
-    nh_param->getParam("scale_JL", pimpl_->scale_JL_map["normal"]);
-    nh_param->getParam("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]);
+    nh_param->getParam("max_displacement_in_a_second", pimpl_->scale_JL_map["position"]);
+    nh_param->getParam("scale_JL_turbo", pimpl_->scale_JL_map["angular"]);
   }
-  // else // Si no se especifican: se aplican estos por defecto
-  // {
-  //   nh_param->param<int>("JL", pimpl_->JL_map["x"], 1);
-  //   nh_param->param<double>("scale_JL", pimpl_->scale_JL_map["normal"]["x"], 0.5);
-  //   nh_param->param<double>("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]["x"], 1.0);
-  // }
 
-  ROS_INFO_NAMED("TeleopFrankaJoy", "Teleop enable button %i.", pimpl_->enable_button); // Imprime por pantalla
-  ROS_INFO_COND_NAMED(pimpl_->enable_turbo_button >= 0, "TeleopFrankaJoy", // Imprime por pantalla si la condición es verdadera
-      "Turbo on button %i.", pimpl_->enable_turbo_button);
+  ROS_INFO_NAMED("TeleopFrankaJoy", "Teleop enable button %i.", pimpl_->enable_mov_position); // Imprime por pantalla
+  ROS_INFO_COND_NAMED(pimpl_->enable_mov_orientation >= 0, "TeleopFrankaJoy", // Imprime por pantalla si la condición es verdadera
+      "angular on button %i.", pimpl_->enable_mov_orientation);
 
-  // Bucle for que recorre el mapa JL_map. Cada elemento en ese mapa es un par clave-valor
-  for (std::map<std::string, int>::iterator it = pimpl_->JL_map.begin();
-      it != pimpl_->JL_map.end(); ++it)
+
+  // Mapear ejes
+  for (std::map<std::string, int>::iterator it = pimpl_->position_map.begin();
+      it != pimpl_->position_map.end(); ++it)
   {
     ROS_INFO_NAMED("TeleopFrankaJoy", "JL axis %s on %i at scale %f.",
-    it->first.c_str(), it->second, pimpl_->scale_JL_map["normal"][it->first]);
+    it->first.c_str(), it->second, pimpl_->scale_JL_map["position"][it->first]);
 
-    ROS_INFO_COND_NAMED(pimpl_->enable_turbo_button >= 0, "TeleopFrankaJoy",
-        "Turbo for JL axis %s is scale %f.", it->first.c_str(), pimpl_->scale_JL_map["turbo"][it->first]);
+    ROS_INFO_COND_NAMED(pimpl_->enable_mov_orientation >= 0, "TeleopFrankaJoy",
+        "angular for JL axis %s is scale %f.", it->first.c_str(), pimpl_->scale_JL_map["angular"][it->first]);
   }
 
   pimpl_->sent_disable_msg = false; // Establece el valor de la vble sent_disable_msg en false
@@ -161,7 +168,7 @@ void TeleopFrankaJoy::Impl::equilibriumPoseCallback(const geometry_msgs::PoseSta
     received_equilibrium_pose=true;
 
     mtx.lock();
-    initial_pose = *msg;
+    equilibrium_pose = *msg;
 
     // Imprime la posición y orientación recibida
     ROS_INFO("Subscripcion: Equilibrium Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
@@ -175,91 +182,171 @@ double applyLimits(double value, double min_limit, double max_limit){
   return std::min(std::max(value, min_limit), max_limit);
 }
 
+// void ModifyVelocity(const std::map<std::string, double>& scale_map, const std::string& fieldname){
+//   if (joy_msg->buttons[increment_vel]){ //incremento
 
-// Función del publicador: envia los comandos de PoseStamped
+//     scale_map.at(fieldname) = scale_map.at(fieldname)*1.5;
+
+//   } else if (joy_msg->buttons[decrement_vel]) {
+
+//       scale_map.at(fieldname) = scale_map.at(fieldname)/1.5;
+
+//   }
+// }
+
+void TeleopFrankaJoy::Impl::ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::string& which_map) {
+    if (joy_msg->buttons[increment_vel]) {
+        for (auto& pair : scale_JL_map[which_map]) {
+            pair.second = pair.second * 1.5; // Incremento de la escala para todos los campos 
+        }
+        ROS_INFO("Velocidad incrementada");
+    } else if (joy_msg->buttons[decrement_vel]) {
+        for (auto& pair : scale_JL_map[which_map]) {
+            pair.second = pair.second / 1.5; // Decremento de la escala para todos los campos
+        }
+        ROS_INFO("Velocidad decrementada");
+    }
+    ros::Duration(reaction_t).sleep(); // Espera de Delta_t segundos
+}
+
 void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg,
                                          const std::string& which_map)
-{
-  geometry_msgs::PoseStamped initial_pose_local = initial_pose;
-  geometry_msgs::Point Position_msg;
+  {
+    
 
-  Position_msg.x = initial_pose_local.pose.position.x + getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
-  Position_msg.y = initial_pose_local.pose.position.y + getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
-  Position_msg.z = initial_pose_local.pose.position.z + getVal(joy_msg, JL_map, scale_JL_map[which_map], "z");
+    geometry_msgs::Point increment_position;
+    float max_displacement_in_a_second = 0.5;
 
-  initial_pose_local.pose.position.x = applyLimits(Position_msg.x, -15, 15);
-  initial_pose_local.pose.position.y = applyLimits(Position_msg.y, -15, 15);
-  initial_pose_local.pose.position.z = applyLimits(Position_msg.z, -5, 10);
+    increment_position.x = Delta_t * getVal(joy_msg, position_map, scale_JL_map[which_map], "x");
+    increment_position.y = Delta_t * getVal(joy_msg, position_map, scale_JL_map[which_map], "y");
+    increment_position.z = Delta_t * getVal(joy_msg, position_map, scale_JL_map[which_map], "z");
 
-  ROS_INFO("Desired Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
-            initial_pose_local.pose.position.x, initial_pose_local.pose.position.y, initial_pose_local.pose.position.z,
-            initial_pose_local.pose.orientation.x, initial_pose_local.pose.orientation.y, initial_pose_local.pose.orientation.z, initial_pose_local.pose.orientation.w);
+    equilibrium_pose.pose.position.x += increment_position.x;
+    equilibrium_pose.pose.position.y += increment_position.y;
+    equilibrium_pose.pose.position.z += increment_position.z;
+
+    cmd_PoseStamped_pub.publish(equilibrium_pose);
+
+    ROS_INFO("Desired Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+            equilibrium_pose.pose.position.x, equilibrium_pose.pose.position.y, equilibrium_pose.pose.position.z,
+            equilibrium_pose.pose.orientation.x, equilibrium_pose.pose.orientation.y, equilibrium_pose.pose.orientation.z, equilibrium_pose.pose.orientation.w);
+
+    ros::Duration(Delta_t).sleep(); // Espera de Delta_t segundos
+    ROS_INFO("Espera de un segundo completada.");
+  }
+
+
+
+// // Función del publicador: envia los comandos de PoseStamped
+// void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg,
+//                                          const std::string& which_map)
+// {
+//   geometry_msgs::PoseStamped initial_pose_local = equilibrium_pose;
+//   geometry_msgs::Point Position_msg;
+
+//   Position_msg.x = initial_pose_local.pose.position.x + getVal(joy_msg, position_map, scale_JL_map[which_map], "x");
+//   Position_msg.y = initial_pose_local.pose.position.y + getVal(joy_msg, position_map, scale_JL_map[which_map], "y");
+//   Position_msg.z = initial_pose_local.pose.position.z + getVal(joy_msg, position_map, scale_JL_map[which_map], "z");
+
+//   initial_pose_local.pose.position.x = applyLimits(Position_msg.x, -15, 15);
+//   initial_pose_local.pose.position.y = applyLimits(Position_msg.y, -15, 15);
+//   initial_pose_local.pose.position.z = applyLimits(Position_msg.z, -5, 10);
+
+//   ROS_INFO("Desired Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+//             initial_pose_local.pose.position.x, initial_pose_local.pose.position.y, initial_pose_local.pose.position.z,
+//             initial_pose_local.pose.orientation.x, initial_pose_local.pose.orientation.y, initial_pose_local.pose.orientation.z, initial_pose_local.pose.orientation.w);
   
-  mtx.lock();
-  initial_pose = initial_pose_local;
-  sent_disable_msg = false;
-  mtx.unlock();
-  cmd_PoseStamped_pub.publish(initial_pose);
+//   mtx.lock();
+//   equilibrium_pose = initial_pose_local;
+//   sent_disable_msg = false;
+//   mtx.unlock();
+//   cmd_PoseStamped_pub.publish(equilibrium_pose);
 
+// }
+
+void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_msg)
+{
+  if (joy_msg->buttons[enable_mov_position]) //Boton derecho
+  {
+    if (joy_msg->buttons[increment_vel] || joy_msg->buttons[decrement_vel]){
+    // Variar velocidad considerando que estamos en enable_mov_position
+    ModifyVelocity(joy_msg, "position");
+    }
+    else{
+    sendCmdPoseStampedMsg(joy_msg, "position");
+    }
+  }else if (joy_msg->buttons[enable_mov_orientation]) // Boton izquierdo
+  {
+    if (joy_msg->buttons[increment_vel] || joy_msg->buttons[decrement_vel]){
+    // Variar velocidad considerando que estamos en enable_mov_orientation
+    ModifyVelocity(joy_msg, "orientation");
+    } else{
+    //sendCmdOrientationMsg(joy_msg, "angular");
+    }  
+  }else{ // Si no se toca nada
+    cmd_PoseStamped_pub.publish(equilibrium_pose);
+    ros::Duration(Delta_t).sleep();
+
+  }
 }
 
 
 // Esta función se llama cada vez que se recibe un mensjae del joystick. Decide que tipo de comando 
-// de velocidad mandar al robot (normal o turbo) o si detener el movimiento del robot
-void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_msg)
-{
-  if (joy_msg->buttons.size() > orientation_button &&
-      joy_msg->buttons[orientation_button]){
-    ROS_INFO("Orientation button press: %d", orientation_button);
-    sent_disable_msg = true;
+// de velocidad mandar al robot (position o angular) o si detener el movimiento del robot
+// void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_msg)
+// {
+//   if (joy_msg->buttons.size() > orientation_button &&
+//       joy_msg->buttons[orientation_button]){
+//     ROS_INFO("Orientation button press: %d", orientation_button);
+//     sent_disable_msg = true;
 
-    mtx.lock();
-    initial_pose.pose.orientation.x = 0.0;
-    initial_pose.pose.orientation.y = 0.0;
-    initial_pose.pose.orientation.z = 0.0;
-    initial_pose.pose.orientation.w = 1.0;
-    mtx.unlock();
+//     mtx.lock();
+//     equilibrium_pose.pose.orientation.x = 0.0;
+//     equilibrium_pose.pose.orientation.y = 0.0;
+//     equilibrium_pose.pose.orientation.z = 0.0;
+//     equilibrium_pose.pose.orientation.w = 1.0;
+//     mtx.unlock();
 
-    cmd_PoseStamped_pub.publish(initial_pose);
+//     cmd_PoseStamped_pub.publish(equilibrium_pose);
 
-  } else if (joy_msg->buttons.size() > home_button &&
-    joy_msg->buttons[home_button]){
+//   } else if (joy_msg->buttons.size() > home_button &&
+//     joy_msg->buttons[home_button]){
 
-    ROS_INFO("Home button press: %d", home_button);
+//     ROS_INFO("Home button press: %d", home_button);
 
-    mtx.lock();
-    initial_pose.pose.position.x = 0.0;
-    initial_pose.pose.position.y = 0.0;
-    initial_pose.pose.position.z = 0.0;
+//     mtx.lock();
+//     equilibrium_pose.pose.position.x = 0.0;
+//     equilibrium_pose.pose.position.y = 0.0;
+//     equilibrium_pose.pose.position.z = 0.0;
 
-    initial_pose.pose.orientation.x = 0.0;
-    initial_pose.pose.orientation.y = 0.0;
-    initial_pose.pose.orientation.z = 0.0;
-    initial_pose.pose.orientation.w = 1.0;
-    mtx.unlock();
+//     equilibrium_pose.pose.orientation.x = 0.0;
+//     equilibrium_pose.pose.orientation.y = 0.0;
+//     equilibrium_pose.pose.orientation.z = 0.0;
+//     equilibrium_pose.pose.orientation.w = 1.0;
+//     mtx.unlock();
 
-    cmd_PoseStamped_pub.publish(initial_pose);
+//     cmd_PoseStamped_pub.publish(equilibrium_pose);
 
-  } else if (enable_turbo_button >= 0 &&
-      joy_msg->buttons.size() > enable_turbo_button &&
-      joy_msg->buttons[enable_turbo_button])
-  {
-    ROS_INFO("enable_turbo button press: %d", enable_turbo_button);
-    sendCmdPoseStampedMsg(joy_msg, "turbo");
-  }
-  else if (joy_msg->buttons.size() > enable_button &&
-           joy_msg->buttons[enable_button])
-  {
-    sendCmdPoseStampedMsg(joy_msg, "normal");
-  }
-  else if (!sent_disable_msg) // When enable button is released
-    {
-      ROS_INFO("Repose Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
-            initial_pose.pose.position.x, initial_pose.pose.position.y, initial_pose.pose.position.z,
-            initial_pose.pose.orientation.x, initial_pose.pose.orientation.y, initial_pose.pose.orientation.z, initial_pose.pose.orientation.w);
-      received_equilibrium_pose=false;
-      cmd_PoseStamped_pub.publish(initial_pose);
-      sent_disable_msg = true;
-    }
-}
+//   } else if (enable_mov_orientation >= 0 &&
+//       joy_msg->buttons.size() > enable_mov_orientation &&
+//       joy_msg->buttons[enable_mov_orientation])
+//   {
+//     ROS_INFO("enable_turbo button press: %d", enable_mov_orientation);
+//     sendCmdPoseStampedMsg(joy_msg, "angular");
+//   }
+//   else if (joy_msg->buttons.size() > enable_mov_position &&
+//            joy_msg->buttons[enable_mov_position])
+//   {
+//     sendCmdPoseStampedMsg(joy_msg, "position");
+//   }
+//   else if (!sent_disable_msg) // When enable button is released
+//     {
+//       ROS_INFO("Repose Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+//             equilibrium_pose.pose.position.x, equilibrium_pose.pose.position.y, equilibrium_pose.pose.position.z,
+//             equilibrium_pose.pose.orientation.x, equilibrium_pose.pose.orientation.y, equilibrium_pose.pose.orientation.z, equilibrium_pose.pose.orientation.w);
+//       received_equilibrium_pose=false;
+//       cmd_PoseStamped_pub.publish(equilibrium_pose);
+//       sent_disable_msg = true;
+//     }
+// }
 } // namespace teleop_franka_joy
