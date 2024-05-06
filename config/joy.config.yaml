@@ -18,14 +18,18 @@ JL:
   x: 1
   y: 0
   z: 4
-max_displacement_in_a_second: #cambiar por max displacement in a second
+  w: 3
+
+position_max_displacement_in_a_second: #cambiar por max displacement in a second
   x: 10
   y: 10
   z: 10
-scale_JL_turbo: #mov angular
-  x: 1
-  y: 1
-  z: 1
+orientation_max_displacement_in_a_second: #mov angular
+  x: 10
+  y: 10
+  z: 10
+  w: 10
+
 
 change_z_button: 0
 enable_mov_position: 4
