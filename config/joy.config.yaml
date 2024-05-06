@@ -14,21 +14,20 @@
 # scale_angular_turbo:
 #   yaw: 1.2
 
-JL: 
+axis_position_map: 
   x: 1
   y: 0
   z: 4
   w: 3
 
-position_max_displacement_in_a_second: #cambiar por max displacement in a second
-  x: 10
-  y: 10
-  z: 10
-orientation_max_displacement_in_a_second: #mov angular
-  x: 10
-  y: 10
-  z: 10
-  w: 10
+axis_orientation_map:
+  x: 1
+  y: 0
+  z: 4
+  w: 3
+
+position_max_displacement_in_a_second: 1 #cambiar por max displacement in a second
+orientation_max_displacement_in_a_second: 1 #mov angular
 
 
 change_z_button: 0
