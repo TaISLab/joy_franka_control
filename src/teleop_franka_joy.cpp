@@ -109,23 +109,6 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
   nh_param->getParam("position_max_displacement_in_a_second", pimpl_->position_max_vel);
   nh_param->getParam("orientation_max_displacement_in_a_second", pimpl_->orientation_max_vel);
 
-
-
-  // ROS_INFO_NAMED("TeleopFrankaJoy", "Teleop enable button %i.", pimpl_->enable_mov_position); // Imprime por pantalla
-  // ROS_INFO_COND_NAMED(pimpl_->enable_mov_orientation >= 0, "TeleopFrankaJoy", // Imprime por pantalla si la condición es verdadera
-  //     "orientation on button %i.", pimpl_->enable_mov_orientation);
-
-  // Mapear ejes
-  // for (std::map<std::string, int>::iterator it = pimpl_->axis_position_map.begin();
-  //     it != pimpl_->axis_position_map.end(); ++it)
-  // {
-  //   ROS_INFO_NAMED("TeleopFrankaJoy", "JL axis %s on %i at scale %f.",
-  //   it->first.c_str(), it->second, pimpl_->scale_JL_map["position"][it->first]);
-
-  //   ROS_INFO_COND_NAMED(pimpl_->enable_mov_orientation >= 0, "TeleopFrankaJoy",
-  //       "orientation for JL axis %s is scale %f.", it->first.c_str(), pimpl_->scale_JL_map["orientation"][it->first]);
-  // }
-
   pimpl_->sent_disable_msg = false; // Establece el valor de la vble sent_disable_msg en false
   pimpl_->received_equilibrium_pose = false;
 
@@ -248,8 +231,15 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
     if (joy_msg->buttons[increment_vel] || joy_msg->buttons[decrement_vel]){
     // Variar velocidad considerando que estamos en enable_mov_position
     ModifyVelocity(joy_msg, axis_position_map, position_max_vel);
-    }
-    else{
+    } else if(joy_msg->buttons[home_button]){ // LLeva a pto de reposo
+      
+      equilibrium_pose.pose.position.x = 0;
+      equilibrium_pose.pose.position.y = 0;
+      equilibrium_pose.pose.position.z = 0.5;
+
+      cmd_PoseStamped_pub.publish(equilibrium_pose);
+
+    } else{
     sendCmdPositionMsg(joy_msg, axis_position_map);
     }
   }else if (joy_msg->buttons[enable_mov_orientation]) // Boton izquierdo
@@ -258,7 +248,16 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
     if (joy_msg->buttons[increment_vel] || joy_msg->buttons[decrement_vel]){
     // Variar velocidad considerando que estamos en enable_mov_orientation
     ModifyVelocity(joy_msg, axis_orientation_map, orientation_max_vel);
-    } else{
+    } else if(joy_msg->buttons[home_button]){ // LLeva a pto de reposo angular
+      
+      equilibrium_pose.pose.orientation.x = 0;
+      equilibrium_pose.pose.orientation.y = 0;
+      equilibrium_pose.pose.orientation.z = 0;
+      equilibrium_pose.pose.orientation.w = 0;
+
+      cmd_PoseStamped_pub.publish(equilibrium_pose);
+
+    }else{
     sendCmdOrientationMsg(joy_msg, axis_orientation_map);
     }  
   }else{ // Si no se toca nada

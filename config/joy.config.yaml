@@ -26,8 +26,8 @@ axis_orientation_map:
   z: 4
   w: 3
 
-position_max_displacement_in_a_second: 1 #cambiar por max displacement in a second
-orientation_max_displacement_in_a_second: 1 #mov angular
+position_max_displacement_in_a_second: 5 #cambiar por max displacement in a second
+orientation_max_displacement_in_a_second: 5 #mov angular
 
 
 change_z_button: 0
