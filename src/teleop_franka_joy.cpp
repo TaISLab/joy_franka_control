@@ -47,6 +47,8 @@ struct TeleopFrankaJoy::Impl
   void sendCmdOrientationMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_orientation_map);
   void equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg);
   void ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_map, float& scale); // Función encargada de subir y bajar la velocidad
+  bool AlcanzadoDesiredEquilibriumPose();
+  void pseudoestatico();
 
   // ROS subscribers and publisher
   ros::Subscriber joy_sub;
@@ -54,14 +56,15 @@ struct TeleopFrankaJoy::Impl
   ros::Publisher cmd_PoseStamped_pub;
 
   geometry_msgs::PoseStamped equilibrium_pose;
-  float Delta_t = 0.01; // Tiempo en segundo
+  geometry_msgs::PoseStamped nuevo_equilibrium_pose;
+  float Delta_t = 0.001; // Tiempo en segundo
   float reaction_t = 0.5; // Tiempo en segundo
 
 
   int enable_mov_position; // Variable que activa el control
   int enable_mov_orientation; //Variable que activa la velocidad orientation
   bool sent_disable_msg; // Variable para indicar si se ha enviado un mensaje de desactivación
-  bool received_equilibrium_pose;
+  bool actualizar_equilibrium_pose;
   int orientation_button;
   int home_button;
   int increment_vel;
@@ -71,7 +74,7 @@ struct TeleopFrankaJoy::Impl
   float orientation_max_vel; // max_displacement_in_a_second
 
   // Exclusión mutua
-  // std::mutex mtx; // Quitar
+  std::mutex mutex; // Quitar
  
   // Creación de un map de ejes por cada tipo de control:
   std::map<std::string, int> axis_position_map; // Control de posicion
@@ -110,7 +113,7 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
   nh_param->getParam("orientation_max_displacement_in_a_second", pimpl_->orientation_max_vel);
 
   pimpl_->sent_disable_msg = false; // Establece el valor de la vble sent_disable_msg en false
-  pimpl_->received_equilibrium_pose = false;
+  pimpl_->actualizar_equilibrium_pose = true;
 
 }
 
@@ -141,20 +144,14 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
 // Función del subscriptor: obtiene la equilibrium pose
 void TeleopFrankaJoy::Impl::equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg)
 {
-  if (received_equilibrium_pose == false){
-
-    ROS_INFO("Me subscribo a equilibriumPose");
-    received_equilibrium_pose=true;
-
-    //mtx.lock();
-    equilibrium_pose = *msg;
+    // ROS_INFO("Me subscribo a equilibriumPose");
+    
+    nuevo_equilibrium_pose = *msg;
 
     // Imprime la posición y orientación recibida
-    ROS_INFO("Subscripcion: Equilibrium Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
-              msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,
-              msg->pose.orientation.x, msg->pose.orientation.y, msg->pose.orientation.z, msg->pose.orientation.w);
-    //mtx.unlock();
-  }
+    // ROS_INFO("Subscripcion: Equilibrium Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+    //           msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,
+    //           msg->pose.orientation.x, msg->pose.orientation.y, msg->pose.orientation.z, msg->pose.orientation.w);
 }
 
 double applyLimits(double value, double min_limit, double max_limit){
@@ -174,12 +171,37 @@ void TeleopFrankaJoy::Impl::ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy
     ros::Duration(reaction_t).sleep(); // Espera de Delta_t segundos
 }
 
+
+bool TeleopFrankaJoy::Impl::AlcanzadoDesiredEquilibriumPose(){
+
+  // Calcular la distancia euclidiana entre la posición actual y la deseada del equilibrium_pose
+    double distance = sqrt(pow(equilibrium_pose.pose.position.x - nuevo_equilibrium_pose.pose.position.x, 2) +
+                           pow(equilibrium_pose.pose.position.y - nuevo_equilibrium_pose.pose.position.y, 2) +
+                           pow(equilibrium_pose.pose.position.z - nuevo_equilibrium_pose.pose.position.z, 2));
+
+    // Comparar la distancia con un umbral predefinido
+    double distance_threshold = 0.001;  // Umbral de distancia predefinido (ajusta según sea necesario)
+    if (distance < distance_threshold) {
+        // Si la distancia es menor que el umbral, se considera que se ha alcanzado la posición deseada
+        return true;
+        ROS_INFO("Equilibrium Pose alcanzado");
+    } else {
+        // Si la distancia es mayor que el umbral, aún no se ha alcanzado la posición deseada
+        return false;
+    }
+}
+
 void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_position_map)
   {
     
     geometry_msgs::Point increment_position;
-    float max_displacement_in_a_second = 0.5; // QUITAR
 
+    if (actualizar_equilibrium_pose == true){
+    equilibrium_pose = nuevo_equilibrium_pose;
+    ROS_INFO("Me subscribo a equilibriumPose por primera vez");
+    actualizar_equilibrium_pose = false;
+    }
+    // Calculo incrementos
     increment_position.x = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "x");
     increment_position.y = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "y");
     increment_position.z = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "z");
@@ -187,6 +209,11 @@ void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr&
     equilibrium_pose.pose.position.x += increment_position.x;
     equilibrium_pose.pose.position.y += increment_position.y;
     equilibrium_pose.pose.position.z += increment_position.z;
+
+    // Aplicamos límites a cada uno de los ejes
+    equilibrium_pose.pose.position.x = applyLimits(equilibrium_pose.pose.position.x, -15, 15);
+    equilibrium_pose.pose.position.y = applyLimits(equilibrium_pose.pose.position.y, -15, 15);
+    equilibrium_pose.pose.position.z = applyLimits(equilibrium_pose.pose.position.z, -15, 15);
 
     cmd_PoseStamped_pub.publish(equilibrium_pose);
 
@@ -196,6 +223,13 @@ void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr&
 
     ros::Duration(Delta_t).sleep(); // Espera de Delta_t segundos
     ROS_INFO("Espera de Delta_t completada.");
+
+    if (AlcanzadoDesiredEquilibriumPose()){
+      equilibrium_pose = nuevo_equilibrium_pose;
+      ROS_INFO("Alcanzado EquilibriumPose deseado");
+      actualizar_equilibrium_pose = false;
+    }
+
   }
 
   void TeleopFrankaJoy::Impl::sendCmdOrientationMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_orientation_map)
@@ -211,7 +245,6 @@ void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr&
     equilibrium_pose.pose.orientation.y += increment_orientation.y;
     equilibrium_pose.pose.orientation.z += increment_orientation.z;
     equilibrium_pose.pose.orientation.w += increment_orientation.w;
-
 
     cmd_PoseStamped_pub.publish(equilibrium_pose);
 
@@ -232,7 +265,7 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
     // Variar velocidad considerando que estamos en enable_mov_position
     ModifyVelocity(joy_msg, axis_position_map, position_max_vel);
     } else if(joy_msg->buttons[home_button]){ // LLeva a pto de reposo
-      
+
       equilibrium_pose.pose.position.x = 0;
       equilibrium_pose.pose.position.y = 0;
       equilibrium_pose.pose.position.z = 0.5;
@@ -261,8 +294,19 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
     sendCmdOrientationMsg(joy_msg, axis_orientation_map);
     }  
   }else{ // Si no se toca nada
-    cmd_PoseStamped_pub.publish(equilibrium_pose); // Se publica el equilibrium_pose cuando no se pulsa ninguna tecla
-    ros::Duration(Delta_t).sleep(); // Prueba: eliminar el temblor
+    
+      if (AlcanzadoDesiredEquilibriumPose()){
+      equilibrium_pose = nuevo_equilibrium_pose;
+      ROS_INFO("Me subscribo a equilibriumPose");
+      }
+
+      cmd_PoseStamped_pub.publish(equilibrium_pose); // Se publica el equilibrium_pose cuando no se pulsa ninguna tecla
+      //ros::Duration(reaction_t).sleep(); // Espera de Delta_t segundos
+
+      ROS_INFO("Repose Pose publishing- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+        equilibrium_pose.pose.position.x, equilibrium_pose.pose.position.y, equilibrium_pose.pose.position.z,
+        equilibrium_pose.pose.orientation.x, equilibrium_pose.pose.orientation.y, equilibrium_pose.pose.orientation.z, equilibrium_pose.pose.orientation.w);
+    // ros::Duration(Delta_t).sleep(); // Prueba: eliminar el temblor
 
   }
 }
