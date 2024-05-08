@@ -57,7 +57,7 @@ struct TeleopFrankaJoy::Impl
 
   geometry_msgs::PoseStamped equilibrium_pose;
   geometry_msgs::PoseStamped nuevo_equilibrium_pose;
-  float Delta_t = 0.001; // Tiempo en segundo
+  float Delta_t = 0.01; // Tiempo en segundo
   float reaction_t = 0.5; // Tiempo en segundo
 
 
@@ -132,12 +132,9 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
   if (axis_map.find(fieldname) == axis_map.end() ||
       joy_msg->axes.size() <= axis_map.at(fieldname))
   {
-    // Condicional que verifica si fieldname existe en axis_map y scale_map, 
-    // y si el tamaño del vector de ejes en joy_msg es mayor al indicado en axis_map devuelve 0
     return 0.0;
   }
 
-  // Retorna el valor del eje especificado por fieldname en joy_msg, escalado por el valor asociado con fieldname en scale_map
   return joy_msg->axes[axis_map.at(fieldname)];
 }
 
@@ -145,8 +142,14 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
 void TeleopFrankaJoy::Impl::equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg)
 {
     // ROS_INFO("Me subscribo a equilibriumPose");
+    mutex.lock();
+    if (actualizar_equilibrium_pose == true){
+    equilibrium_pose = *msg; // Inicializa el equilibrium_pose por primera vez
+    }
     
     nuevo_equilibrium_pose = *msg;
+    mutex.unlock();
+    ros::Duration(Delta_t).sleep(); // Espera de Delta_t segundos
 
     // Imprime la posición y orientación recibida
     // ROS_INFO("Subscripcion: Equilibrium Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
@@ -168,7 +171,7 @@ void TeleopFrankaJoy::Impl::ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy
         scale = scale/2; // Decremento de la escala
         ROS_INFO("Velocidad decrementada a %f", scale);
     }
-    ros::Duration(reaction_t).sleep(); // Espera de Delta_t segundos
+    ros::Duration(reaction_t).sleep(); // Espera un tiempo de reaccion 
 }
 
 
@@ -180,11 +183,12 @@ bool TeleopFrankaJoy::Impl::AlcanzadoDesiredEquilibriumPose(){
                            pow(equilibrium_pose.pose.position.z - nuevo_equilibrium_pose.pose.position.z, 2));
 
     // Comparar la distancia con un umbral predefinido
-    double distance_threshold = 0.001;  // Umbral de distancia predefinido (ajusta según sea necesario)
+    double distance_threshold = 0.01;  // Umbral de distancia predefinido (ajusta según sea necesario)
     if (distance < distance_threshold) {
         // Si la distancia es menor que el umbral, se considera que se ha alcanzado la posición deseada
         return true;
         ROS_INFO("Equilibrium Pose alcanzado");
+        actualizar_equilibrium_pose = true;
     } else {
         // Si la distancia es mayor que el umbral, aún no se ha alcanzado la posición deseada
         return false;
@@ -193,19 +197,16 @@ bool TeleopFrankaJoy::Impl::AlcanzadoDesiredEquilibriumPose(){
 
 void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_position_map)
   {
-    
     geometry_msgs::Point increment_position;
-
-    if (actualizar_equilibrium_pose == true){
-    equilibrium_pose = nuevo_equilibrium_pose;
-    ROS_INFO("Me subscribo a equilibriumPose por primera vez");
     actualizar_equilibrium_pose = false;
-    }
+
     // Calculo incrementos
     increment_position.x = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "x");
     increment_position.y = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "y");
     increment_position.z = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "z");
 
+    mutex.lock();
+    equilibrium_pose.header.seq++;
     equilibrium_pose.pose.position.x += increment_position.x;
     equilibrium_pose.pose.position.y += increment_position.y;
     equilibrium_pose.pose.position.z += increment_position.z;
@@ -217,6 +218,7 @@ void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr&
 
     cmd_PoseStamped_pub.publish(equilibrium_pose);
 
+    mutex.unlock();
     ROS_INFO("Desired Pose- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
             equilibrium_pose.pose.position.x, equilibrium_pose.pose.position.y, equilibrium_pose.pose.position.z,
             equilibrium_pose.pose.orientation.x, equilibrium_pose.pose.orientation.y, equilibrium_pose.pose.orientation.z, equilibrium_pose.pose.orientation.w);
@@ -224,11 +226,7 @@ void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr&
     ros::Duration(Delta_t).sleep(); // Espera de Delta_t segundos
     ROS_INFO("Espera de Delta_t completada.");
 
-    if (AlcanzadoDesiredEquilibriumPose()){
-      equilibrium_pose = nuevo_equilibrium_pose;
-      ROS_INFO("Alcanzado EquilibriumPose deseado");
-      actualizar_equilibrium_pose = false;
-    }
+    AlcanzadoDesiredEquilibriumPose();
 
   }
 
@@ -295,13 +293,8 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
     }  
   }else{ // Si no se toca nada
     
-      if (AlcanzadoDesiredEquilibriumPose()){
-      equilibrium_pose = nuevo_equilibrium_pose;
-      ROS_INFO("Me subscribo a equilibriumPose");
-      }
-
+      AlcanzadoDesiredEquilibriumPose();
       cmd_PoseStamped_pub.publish(equilibrium_pose); // Se publica el equilibrium_pose cuando no se pulsa ninguna tecla
-      //ros::Duration(reaction_t).sleep(); // Espera de Delta_t segundos
 
       ROS_INFO("Repose Pose publishing- Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
         equilibrium_pose.pose.position.x, equilibrium_pose.pose.position.y, equilibrium_pose.pose.position.z,
