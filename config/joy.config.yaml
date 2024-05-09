@@ -1,35 +1,17 @@
-# axis_linear:
-#   x: 1
-#   y: 0
-# scale_linear:
-#   x: 0.5
-#   y: 0.5
-# scale_linear_turbo:
-#   x: 1.6
-#   y: 1.6
-# axis_angular:
-#   yaw: 3
-# scale_angular:
-#   yaw: 0.8
-# scale_angular_turbo:
-#   yaw: 1.2
+# Axis mapping
 
+#   control de posicion
 axis_position_map: 
   x: 1
   y: 0
   z: 4
-  w: 3
-
+#   control de orientacion
 axis_orientation_map:
-  x: 1
-  y: 0
+  x: 0
+  y: 1
   z: 4
-  w: 3
 
-position_max_displacement_in_a_second: 5 #cambiar por max displacement in a second
-orientation_max_displacement_in_a_second: 5 #mov angular
-
-
+# Button mapping
 change_z_button: 0
 enable_mov_position: 4
 enable_mov_orientation: 5
@@ -37,3 +19,7 @@ orientation_button: 9
 home_button: 8
 increment_velocity: 6
 decrement_velocity: 7
+
+# Velocidad maxima
+position_max_displacement_in_a_second: 12.5
+orientation_max_displacement_in_a_second: 50
