@@ -52,7 +52,7 @@ struct TeleopFrankaJoy::Impl
   void sendCmdOrientationMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_orientation_map);
   void equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg);
   void ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_map, float& scale); // Función encargada de subir y bajar la velocidad
-  void obtain_equilibriumPose(const franka_msgs::FrankaStateConstPtr& initial_state);
+  void obtain_equilibriumPose(const franka_msgs::FrankaState& initial_state);
 
   // ROS subscribers and publisher
   ros::Subscriber joy_sub;
@@ -133,7 +133,7 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
   return joy_msg->axes[axis_map.at(fieldname)];
 }
 
-void TeleopFrankaJoy::Impl::obtain_equilibriumPose(const franka_msgs::FrankaStateConstPtr& initial_state){
+void TeleopFrankaJoy::Impl::obtain_equilibriumPose(const franka_msgs::FrankaState& initial_state){
 
   // convert to eigen
   Eigen::Map<Eigen::Matrix<double, 7, 1>> q_initial(initial_state.q.data());
