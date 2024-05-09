@@ -52,12 +52,14 @@ struct TeleopFrankaJoy::Impl
   void sendCmdOrientationMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_orientation_map);
   void equilibriumPoseCallback(const geometry_msgs::PoseStampedConstPtr& msg);
   void ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_map, float& scale); // Función encargada de subir y bajar la velocidad
-  void obtain_equilibriumPose(const franka_msgs::FrankaState& initial_state);
+  void obtain_equilibriumPose(const franka_msgs::FrankaStateConstPtr& msg);
 
   // ROS subscribers and publisher
   ros::Subscriber joy_sub;
   ros::Subscriber franka_state_sub; // Obtiene la tf 0_T_EE
   ros::Publisher cmd_PoseStamped_pub;
+
+  franka_msgs::FrankaState current_franka_state;
 
   geometry_msgs::PoseStamped current_equilibrium_pose;
   geometry_msgs::PoseStamped equilibrium_pose;
@@ -133,12 +135,26 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
   return joy_msg->axes[axis_map.at(fieldname)];
 }
 
-void TeleopFrankaJoy::Impl::obtain_equilibriumPose(const franka_msgs::FrankaState& initial_state){
+// Función para convertir un arreglo float64[16] en una matriz de transformación homogénea 4x4
+Eigen::Affine3d convertFloat64ToAffine(const double* data) {
+    Eigen::Matrix4d transformation_matrix;
+    // Copia los datos del arreglo a la matriz de transformación
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            transformation_matrix(j, i) = data[i * 4 + j];
+        }
+    }
+    // Convierte la matriz de transformación a una transformación afín 3D
+    Eigen::Affine3d affine_transform(transformation_matrix);
+    return affine_transform;
+}
+
+void TeleopFrankaJoy::Impl::obtain_equilibriumPose(const franka_msgs::FrankaStateConstPtr& msg){
+  
+  current_franka_state = *msg;
 
   // convert to eigen
-  Eigen::Map<Eigen::Matrix<double, 7, 1>> q_initial(initial_state.q.data());
-  Eigen::Affine3d initial_transform(Eigen::Matrix4d::Map(initial_state.O_T_EE.data()));
-
+  Eigen::Affine3d initial_transform = convertFloat64ToAffine(current_franka_state.O_T_EE.data());
   // set equilibrium point to current state
   Eigen::Vector3d position_d_ = initial_transform.translation();
   Eigen::Quaterniond orientation_d_ = Eigen::Quaterniond(initial_transform.rotation());
@@ -154,7 +170,7 @@ void TeleopFrankaJoy::Impl::obtain_equilibriumPose(const franka_msgs::FrankaStat
   initial_equilibrium_pose.pose.orientation.z = orientation_d_.z();
   initial_equilibrium_pose.pose.orientation.w = orientation_d_.w();
 
-  current_equilibrium_pose = initial_equilibrium_pose;
+  equilibrium_pose = initial_equilibrium_pose;
 
 }
 
