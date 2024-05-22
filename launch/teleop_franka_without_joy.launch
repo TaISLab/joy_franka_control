@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="joy_config" default="ps3" />
+  <arg name="joy_dev" default="/dev/input/js0" />
+  <arg name="config_filepath" default="$(find joy_franka_control)/config/joy.config.yaml" />
+  <arg name="joy_topic" default="joy" />
+
+  <node pkg="joy_franka_control" type="teleop_franka_node" name="teleop_franka_joy" >
+    <rosparam command="load" file="$(arg config_filepath)" />
+    <remap from="joy" to="$(arg joy_topic)" />
+  </node>
+</launch>
