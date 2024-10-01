@@ -7,13 +7,16 @@ Este paquete contiene el nodo `joy_franka_node`. Este nodo se subscribe al topic
 
 Además, se subcribe al topic `/franka_state_controller/franka_states` para obtener el `equilibrium_pose` inicial al momento de iniciar la teleoperación.
 
-## Paquetes necesarios
-
-Se debe tener instalado el paquete `joy` encargado de actuar como driver para el mando. Disponible en: http://wiki.ros.org/joy.
-
-Se debe tener instalado y configurado el metapaquete `franka_ros` así como la librería `libfranka`. Disponible en: https://frankaemika.github.io/docs/installation_linux.html.
-
 ## Instalación
+
+### Paquetes necesarios
+Para su uso, se debe tener instalados los siguientes paquetes. Se adjunta el enlace que contiene información sobre su instalación.
+- `joy`. Driver para el mando. Disponible en: http://wiki.ros.org/joy.
+- `franka_ros_rafi'. Se trata de una versión modificada del metapaquete `franka_ros`. <!-- añadir enlace al metapaquete modificado. lo que se ha modificado  -->
+
+<!-- Se debe tener instalado y configurado el metapaquete `franka_ros` así como la librería `libfranka`. Disponible en: https://frankaemika.github.io/docs/installation_linux.html. -->
+
+### Instalación de este paquete
 
 ```bash
 git clone https://github.com/rodri-castro/joy_franka_control.git
