@@ -22,13 +22,18 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCL
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "geometry_msgs/PoseStamped.h"
 #include "ros/ros.h"
-#include "sensor_msgs/Joy.h"
-#include "teleop_franka_joy/teleop_franka_joy.h"
-
 #include <map>
 #include <string>
+#include <Eigen/Dense>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+
+#include "teleop_franka_joy/teleop_franka_joy.h"
+#include "geometry_msgs/PoseStamped.h"
+#include "sensor_msgs/Joy.h"
+#include "franka_msgs/FrankaState.h"
+
 
 // Definir un namespace evita conflictos de nombres con otras partes del código o blibliotecas externas
 namespace teleop_franka_joy
@@ -41,25 +46,43 @@ namespace teleop_franka_joy
  */
 struct TeleopFrankaJoy::Impl
 {
-  void joyCallback(const sensor_msgs::Joy::ConstPtr& joy); // Función para manejar los mensajes del joystick
-  void frankaPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose);
-  void sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::string& which_map); // Función para enviar comandos de PoseStamped
+  // Members functions
+  void printEquilibriumPoseInfo(const geometry_msgs::PoseStamped& equilibrium_pose, const std::string& info_string);
 
+  void joyCallback(const sensor_msgs::Joy::ConstPtr& joy); // Función encargada de manejar los mensajes del joystick
+  void sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_position_map); // Función encargada de calcular los valores de PoseStamped
+  void sendCmdOrientationMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_orientation_map);
+  void ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg, float& scale, float& max_vel); // Función encargada de modificar la velocidad
+  void obtainEquilibriumPose(const franka_msgs::FrankaStateConstPtr& msg);
 
-  ros::Subscriber joy_sub; // Subscriptor para el tema del joystick
-  ros::Subscriber franka_PoseStamped_sub;
-  ros::Publisher cmd_PoseStamped_pub; // Publicador para enviar comandos de PoseStamped
+  // ROS subscribers and publisher
+  ros::Subscriber joy_sub;
+  ros::Subscriber franka_state_sub; // Obtiene la tf 0_T_EE
+  ros::Publisher cmd_PoseStamped_pub;
 
-  int enable_button; // Vble que activa el control
-  int enable_turbo_button; //Vble que activa la velocidad turbo
+  franka_msgs::FrankaState current_franka_state;
+  geometry_msgs::PoseStamped equilibrium_pose;
+
+  float Delta_t = 0.01; // Tiempo en segundo
+  float reaction_t = 0.5; // Tiempo en segundo de reaccion del operador
+
+  int enable_mov_position; // Variable que activa el control
+  int enable_mov_orientation; //Variable que activa la velocidad orientation
+  int orientation_button;
+  int home_button;
+  int increment_vel;
+  int decrement_vel;
+
+  float position_vel = 5;
+  float orientation_vel = 20;
+  float position_max_vel;
+  float orientation_max_vel; // max_displacement_in_a_second
+  float min_vel = 2;
  
-  // Creación de un map por cada joystick:
-  std::map<std::string, int> JL_map; // Mapa que asigna el nombre de JL_map a un eje determinado de mando
-  std::map< std::string, std::map<std::string, double> > scale_JL_map; // Mapa que asocia el nombre de un eje con una escala asociada al movimiento
+  // Creación de un map de ejes por cada tipo de control:
+  std::map<std::string, int> axis_position_map; // Control de posicion
+  std::map<std::string, int> axis_orientation_map; // Control de orientación
 
-  bool sent_disable_msg; // Bandera para indicar si se ha enviado un mensaje de desactivación
-
-  geometry_msgs::PoseStamped franka_PoseStamped;
 };
 
 /**
@@ -67,156 +90,237 @@ struct TeleopFrankaJoy::Impl
  * \param nh NodeHandle to use for setting up the publisher and subscriber.
  * \param nh_param NodeHandle to use for searching for configuration parameters.
  */
-
 // Constructor: Inicializa los parámetros del nodo ROS y los parámetros del joystick
 TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 {
   pimpl_ = new Impl;
-  pimpl_->cmd_PoseStamped_pub = nh->advertise<geometry_msgs::PoseStamped>("cmd_PoseStamped", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
-  pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_);
-  pimpl_->franka_PoseStamped_sub = nh->subscribe<geometry_msgs::PoseStamped>("franka_PoseStamped", 1, &TeleopFrankaJoy::Impl::frankaPoseCallback, pimpl_);
 
-  nh_param->param<int>("enable_button", pimpl_->enable_button, 0); // Se obtiene el parámetro del enable_button del servidor de parámetros ROS, por defecto es 0.
-  nh_param->param<int>("enable_turbo_button", pimpl_->enable_turbo_button, -1);
+  pimpl_->cmd_PoseStamped_pub = nh->advertise<geometry_msgs::PoseStamped>("/cartesian_impedance_example_controller/equilibrium_pose", 1, true); // Se crea el publicador ROS que publicará mensajes de tipo PoseStamped en el topic cmd_posestamped
+  pimpl_->joy_sub = nh->subscribe<sensor_msgs::Joy>("joy", 1, &TeleopFrankaJoy::Impl::joyCallback, pimpl_); // Cuando se recibe un mensaje llama a la función callback.
+  pimpl_->franka_state_sub = nh->subscribe<franka_msgs::FrankaState>("/franka_state_controller/franka_states", 10, &TeleopFrankaJoy::Impl::obtainEquilibriumPose, pimpl_);
 
-  if (nh_param->getParam("JL", pimpl_->JL_map))
-  {
-    // Obtiene los parámetros axis_lineal
-    nh_param->getParam("scale_JL", pimpl_->scale_JL_map["normal"]);
-    nh_param->getParam("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]);
-  }
-  else
-  {
-    // Si no se especifican: se aplican estos por defecto
-    nh_param->param<int>("JL", pimpl_->JL_map["x"], 1);
-    nh_param->param<double>("scale_JL", pimpl_->scale_JL_map["normal"]["x"], 0.5);
-    nh_param->param<double>("scale_JL_turbo", pimpl_->scale_JL_map["turbo"]["x"], 1.0);
-  }
-  ROS_INFO_NAMED("TeleopFrankaJoy", "Teleop enable button %i.", pimpl_->enable_button); // Imprime por pantalla
-  ROS_INFO_COND_NAMED(pimpl_->enable_turbo_button >= 0, "TeleopFrankaJoy", // Imprime por pantalla si la condición es verdadera
-      "Turbo on button %i.", pimpl_->enable_turbo_button);
+  // Asignar botones
+  nh_param->param<int>("enable_mov_position", pimpl_->enable_mov_position, 0); // Se obtiene el parámetro del enable_mov_position del servidor de parámetros ROS, por defecto es 0.
+  nh_param->param<int>("enable_mov_orientation", pimpl_->enable_mov_orientation, -1);
+  nh_param->param<int>("orientation_button", pimpl_->orientation_button, -1); // Antes 8
+  nh_param->param<int>("home_button", pimpl_->home_button, -1);
 
-  // Bucle for que recorre el mapa JL_map. Cada elemento en ese mapa es un par clave-valor
-  for (std::map<std::string, int>::iterator it = pimpl_->JL_map.begin();
-      it != pimpl_->JL_map.end(); ++it)
-  {
-    ROS_INFO_NAMED("TeleopFrankaJoy", "JL axis %s on %i at scale %f.",
-    it->first.c_str(), it->second, pimpl_->scale_JL_map["normal"][it->first]);
+  nh_param->param<int>("increment_velocity", pimpl_->increment_vel, -1);
+  nh_param->param<int>("decrement_velocity", pimpl_->decrement_vel, -1);
 
-    ROS_INFO_COND_NAMED(pimpl_->enable_turbo_button >= 0, "TeleopFrankaJoy",
-        "Turbo for JL axis %s is scale %f.", it->first.c_str(), pimpl_->scale_JL_map["turbo"][it->first]);
+  // Asignación de mapas
+  nh_param->getParam("axis_position_map", pimpl_->axis_position_map);
+  nh_param->getParam("axis_orientation_map", pimpl_->axis_orientation_map);
 
-  }
+  nh_param->getParam("position_max_displacement_in_a_second", pimpl_->position_max_vel);
+  nh_param->getParam("orientation_max_displacement_in_a_second", pimpl_->orientation_max_vel);
 
-  pimpl_->sent_disable_msg = false; // Establece el valor de la vble sent_disable_msg en false
 }
 
-
-
+void TeleopFrankaJoy::Impl::printEquilibriumPoseInfo(const geometry_msgs::PoseStamped& equilibrium_pose, const std::string& info_string) {
+    ROS_INFO("%s - Position (x, y, z): (%.2f, %.2f, %.2f), Orientation (x, y, z, w): (%.2f, %.2f, %.2f, %.2f)",
+            info_string.c_str(),
+            equilibrium_pose.pose.position.x, equilibrium_pose.pose.position.y, equilibrium_pose.pose.position.z,
+            equilibrium_pose.pose.orientation.x, equilibrium_pose.pose.orientation.y, equilibrium_pose.pose.orientation.z, equilibrium_pose.pose.orientation.w);
+}
 
 // Obtiene valores específicos del mensaje del joystick
-double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_map,
-              const std::map<std::string, double>& scale_map, const std::string& fieldname)
+double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_map, const std::string& fieldname)
 {
-
   /*
   Método que obtiene valores especificos del mensaje del joystick:
   Argumentos:
-    - joy_msg: puntero cte al mensaje del joystick
-    - axis_map: mapa que asocia nombre con indices de ejes en el joy_stick
-    - scale_map: mapa que asocia nombres de campos con escalas para esos campos
-    - fieldname: Nombre del campo que se quiere obtener
-
+    - joy_msg: mensaje joy del cual se va a obtener la informacion
+    - axis_map: mapa de ejes de control
+    - fieldname: campo que se quiere obtener [x,y,z] o [x,y,z,w]
   */
 
-  if (axis_map.find(fieldname) == axis_map.end() ||
-      scale_map.find(fieldname) == scale_map.end() ||
-      joy_msg->axes.size() <= axis_map.at(fieldname))
+  if (axis_map.find(fieldname) == axis_map.end() || joy_msg->axes.size() <= axis_map.at(fieldname))
   {
-    // Condicional que verifica si fieldname existe en axis_map y scale_map, 
-    // y si el tamaño del vector de ejes en joy_msg es mayor al indicado en axis_map devuelve 0
     return 0.0;
   }
 
-  // Retorna el valor del eje especificado por fieldname en joy_msg, escalado por el valor asociado con fieldname en scale_map
-  return joy_msg->axes[axis_map.at(fieldname)] * scale_map.at(fieldname);
+  return joy_msg->axes[axis_map.at(fieldname)];
 }
 
-void TeleopFrankaJoy::Impl::frankaPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose)
-{
-  franka_PoseStamped = *pose;
+// Función para convertir un arreglo float64[16]/double en una matriz de transformación homogénea 4x4
+Eigen::Affine3d convertFloat64ToAffine(const double* data) {
+    Eigen::Matrix4d transformation_matrix;
+    // Copia los datos del arreglo a la matriz de transformación
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            transformation_matrix(j, i) = data[i * 4 + j];
+        }
+    }
+    // Convierte la matriz de transformación a una transformación afín 3D
+    Eigen::Affine3d affine_transform(transformation_matrix);
+    return affine_transform;
 }
 
-// Envia los comandos de velocidad
-void TeleopFrankaJoy::Impl::sendCmdPoseStampedMsg(const sensor_msgs::Joy::ConstPtr& joy_msg,
-                                         const std::string& which_map)
-{
+void TeleopFrankaJoy::Impl::obtainEquilibriumPose(const franka_msgs::FrankaStateConstPtr& msg){
+  /*
+  Función encargada de obtener el franka_msgs::FrankaState.O_T_EE y calcular el EquilibriumPose
+  */
 
-  static bool initial_pose_received = false;
-  static geometry_msgs::PoseStamped initial_pose;
+  current_franka_state = *msg; // Convierte de FrankaStateConstPtr [msg] a FrankaStatePtr [current_franka_state]
 
-  if (!initial_pose_received)
+  // convert to eigen
+  Eigen::Affine3d initial_transform = convertFloat64ToAffine(current_franka_state.O_T_EE.data());
+  // set equilibrium point to current state
+  Eigen::Vector3d position_d_ = initial_transform.translation();
+  Eigen::Quaterniond orientation_d_ = Eigen::Quaterniond(initial_transform.rotation());
+
+  // Asignacion a equilibrium_pose
+  geometry_msgs::PoseStamped calculated_equilibrium_pose;
+  calculated_equilibrium_pose.pose.position.x = position_d_.x();
+  calculated_equilibrium_pose.pose.position.y = position_d_.y();
+  calculated_equilibrium_pose.pose.position.z = position_d_.z();
+
+  calculated_equilibrium_pose.pose.orientation.x = orientation_d_.x();
+  calculated_equilibrium_pose.pose.orientation.y = orientation_d_.y();
+  calculated_equilibrium_pose.pose.orientation.z = orientation_d_.z();
+  calculated_equilibrium_pose.pose.orientation.w = orientation_d_.w();
+
+  equilibrium_pose = calculated_equilibrium_pose;
+
+  printEquilibriumPoseInfo(calculated_equilibrium_pose, "Calculated Eq Pose");
+
+}
+
+double applyLimits(double value, double min_limit, double max_limit){
+  // Aplica limites en el desplazamiento del equilibrium pose
+  return std::min(std::max(value, min_limit), max_limit);
+}
+
+void TeleopFrankaJoy::Impl::ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg,
+                                           float& scale,
+                                           float& max_vel) {
+    // Modifica la velocidad para una escala determinada
+    if (joy_msg->buttons[increment_vel]) {
+
+        //scale = scale*1.2; // Incremento de la escala
+        scale = std::min(static_cast<double>(scale * 1.2), static_cast<double>(max_vel));
+        ROS_INFO("Velocidad incrementada a %f", scale);
+
+    } else if (joy_msg->buttons[decrement_vel]) {
+
+        //scale = std::max(scale/1.2, min_vel); // Decremento de la escala
+        scale = std::max(static_cast<double>(scale / 1.2), static_cast<double>(min_vel));
+        ROS_INFO("Velocidad decrementada a %f", scale);
+
+    }
+    ros::Duration(reaction_t).sleep(); // Espera un tiempo de reaccion 
+}
+
+
+void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_position_map)
   {
-    ROS_INFO("Waiting for initial pose from Franka...");
-    return;
+    geometry_msgs::Point increment_position;
+
+    // Calculo incrementos
+    increment_position.x = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "x");
+    increment_position.y = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "y");
+    increment_position.z = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "z");
+
+    //equilibrium_pose.header.seq++;
+    equilibrium_pose.pose.position.x += increment_position.x;
+    equilibrium_pose.pose.position.y += increment_position.y;
+    equilibrium_pose.pose.position.z += increment_position.z;
+
+    // Aplicamos límites a cada uno de los ejes
+    equilibrium_pose.pose.position.x = applyLimits(equilibrium_pose.pose.position.x, -0.81, 0.81);
+    equilibrium_pose.pose.position.y = applyLimits(equilibrium_pose.pose.position.y, -0.81, 0.81);
+    equilibrium_pose.pose.position.z = applyLimits(equilibrium_pose.pose.position.z, -0.4, 1.15);
+
+    cmd_PoseStamped_pub.publish(equilibrium_pose);
+
+    printEquilibriumPoseInfo(equilibrium_pose, "Desired Eq pose");
+    ros::Duration(Delta_t).sleep(); // Espera de Delta_t segundos
+    ROS_INFO("Espera de Delta_t completada.");
+
   }
-  
-  geometry_msgs::PoseStamped cmd_PoseStamped_msg;
 
-  cmd_PoseStamped_msg = franka_PoseStamped;
+void TeleopFrankaJoy::Impl::sendCmdOrientationMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_orientation_map)
+  {
+    // ROS usa dos tipos de quaternions que no se peuden mezclar pero si convertir
+    tf2::Quaternion q_rot;
+    tf2::Quaternion q_orig;
+    tf2::Quaternion q_new;
 
-  geometry_msgs::Pose Pose_msg;
-  geometry_msgs::Point Position_msg;
+    // Convertir msg a tf2 para poder hacer (*)
+    tf2::convert(equilibrium_pose.pose.orientation, q_orig);
 
-  static geometry_msgs::PoseStamped accumulated_pose;
+    // Calculo de quaternion en funcion de angulos eulerXYZ
+    double roll = Delta_t * orientation_max_vel * getVal(joy_msg, axis_orientation_map, "x");
+    double pitch = Delta_t * orientation_max_vel * getVal(joy_msg, axis_orientation_map, "y");
+    double yaw = Delta_t * orientation_max_vel * getVal(joy_msg, axis_orientation_map, "z");
+    q_rot.setRPY(roll, pitch, yaw);
 
-  Position_msg.x = getVal(joy_msg, JL_map, scale_JL_map[which_map], "x");
-  Position_msg.y = getVal(joy_msg, JL_map, scale_JL_map[which_map], "y");
-  
+    // Aplicar rotacion
+    q_new = q_rot * q_orig;
+    
+    // Normalizar
+    q_new.normalize();
 
-  // cmd_PoseStamped_msg.pose.position.x = Position_msg.x;
-  // cmd_PoseStamped_msg.pose.position.y = Position_msg.y;
+    // convertir de tf2 a msg
+    tf2::convert(q_new, equilibrium_pose.pose.orientation);
 
-  accumulated_pose.pose.position.x += Position_msg.x;
-  accumulated_pose.pose.position.y += Position_msg.y;
+    // Publicar nueva orientacion
+    cmd_PoseStamped_pub.publish(equilibrium_pose);
+    printEquilibriumPoseInfo(equilibrium_pose, "Desired Eq pose");
 
-  // cmd_PoseStamped_pub.publish(cmd_PoseStamped_msg);
-  cmd_PoseStamped_pub.publish(accumulated_pose);
+    ros::Duration(Delta_t).sleep(); // Espera de Delta_t segundos
+    ROS_INFO("Espera de Delta_t completada.");
+  }
 
-  sent_disable_msg = false;
-}
-
-
-// Esta función se llama cada vez que se recibe un mensjae del joystick. Decide que tipo de comando 
-// de velocidad mandar al robot (normal o turbo) o si detener el movimiento del robot
 void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_msg)
 {
-  if (enable_turbo_button >= 0 &&
-      joy_msg->buttons.size() > enable_turbo_button &&
-      joy_msg->buttons[enable_turbo_button])
+  if (joy_msg->buttons[enable_mov_position]) //Boton derecho
   {
-    sendCmdPoseStampedMsg(joy_msg, "turbo");
-  }
-  else if (joy_msg->buttons.size() > enable_button &&
-           joy_msg->buttons[enable_button])
-  {
-    sendCmdPoseStampedMsg(joy_msg, "normal");
-  }
-  else
-  {
-    // When enable button is released, immediately send a single no-motion command
-    // in order to stop the robot.
-    if (!sent_disable_msg)
-    {
-      // Initializes with zeros by default.
-      geometry_msgs::PoseStamped cmd_PoseStamped_msg;
-      cmd_PoseStamped_pub.publish(cmd_PoseStamped_msg);
-      sent_disable_msg = true;
-    }
-  }
+    ROS_INFO("Boton LB pulsado");
+    if (joy_msg->buttons[increment_vel] || joy_msg->buttons[decrement_vel]){
+    // Variar velocidad considerando que estamos en enable_mov_position
+    ModifyVelocity(joy_msg, position_vel, position_max_vel);
+    } else if(joy_msg->buttons[home_button]){ // LLeva a pto de reposo
 
+      equilibrium_pose.pose.position.x = 0;
+      equilibrium_pose.pose.position.y = 0.2;
+      equilibrium_pose.pose.position.z = 0.5;
+
+      cmd_PoseStamped_pub.publish(equilibrium_pose);
+
+    } else{
+    sendCmdPositionMsg(joy_msg, axis_position_map);
+    }
+  }else if (joy_msg->buttons[enable_mov_orientation]) // Boton izquierdo
+  {
+    ROS_INFO("Boton RB pulsado");
+
+    if (joy_msg->buttons[increment_vel] || joy_msg->buttons[decrement_vel]){
+      // Variar velocidad considerando que estamos en enable_mov_orientation
+      ModifyVelocity(joy_msg, orientation_vel, orientation_max_vel);
+
+    } else if(joy_msg->buttons[home_button]){ // Pto de reposo angular
+      
+      equilibrium_pose.pose.orientation.x = 0;
+      equilibrium_pose.pose.orientation.y = 0;
+      equilibrium_pose.pose.orientation.z = 0;
+      equilibrium_pose.pose.orientation.w = 1;
+
+      cmd_PoseStamped_pub.publish(equilibrium_pose);
+
+    }else{
+      // Publicación segun el mando
+      sendCmdOrientationMsg(joy_msg, axis_orientation_map);
+
+    }  
+  }else{ // Si no se toca nada
+    
+      cmd_PoseStamped_pub.publish(equilibrium_pose); // Se publica el equilibrium_pose cuando no se pulsa ninguna tecla
+      printEquilibriumPoseInfo(equilibrium_pose, "Repose Eq Pose");
+
+    // ros::Duration(Delta_t).sleep(); // Prueba: eliminar el temblor
+  }
 }
 
-}  // namespace teleop_franka_joy
-
-// No hay main porque se asume que será proporcionado por un nodo ROS separado que instanciará y ejecutará este nodo
+} // namespace teleop_franka_joy
