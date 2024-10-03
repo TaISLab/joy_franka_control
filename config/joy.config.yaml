@@ -1,12 +1,13 @@
+# Configuracion del mapeo de ejes y botones para el paquete de ROS
+
 # Axis mapping
 
-#   control de posicion
-axis_position_map: 
+axis_position_map: # control de posicion
   x: 1
   y: 0
   z: 4
-#   control de orientacion
-axis_orientation_map:
+
+axis_orientation_map: # control de orientacion
   x: 0
   y: 1
   z: 4
@@ -20,6 +21,6 @@ home_button: 8
 increment_velocity: 6
 decrement_velocity: 7
 
-# Velocidad maxima
+# Parametros
 position_max_displacement_in_a_second: 12.5
 orientation_max_displacement_in_a_second: 50

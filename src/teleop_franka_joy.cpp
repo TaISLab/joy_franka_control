@@ -1,25 +1,16 @@
-/**
-Software License Agreement (BSD)
+/*
 
-\authors   Mike Purvis <mpurvis@clearpathrobotics.com>
-\copyright Copyright (c) 2014, Clearpath Robotics, Inc., All rights reserved.
+ROS Package: joy_franka_control
+File: teleop_franka_joy.cpp
+Author: Rodrigo Castro Ochoa, rcastro@uma.es, University of Málaga.
 
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that
-the following conditions are met:
- * Redistributions of source code must retain the above copyright notice, this list of conditions and the
-   following disclaimer.
- * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the
-   following disclaimer in the documentation and/or other materials provided with the distribution.
- * Neither the name of Clearpath Robotics nor the names of its contributors may be used to endorse or promote
-   products derived from this software without specific prior written permission.
+Description:
+Teleoperation of the cartesian impedance controller for the Franka Emika Panda manipulator using a joystick. 
+This node subscribes to the topic /Joy and publishes a PoseStamped message in the topic /cartesian_impedance_example_controller/equilibrium_pose.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WAR-
-RANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, IN-
-DIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
-OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+Credits:
+This code is based on the teleop_twist_joy project, available at: http://wiki.ros.org/teleop_twist_joy
+
 */
 
 #include "ros/ros.h"
@@ -35,7 +26,6 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSI
 #include "franka_msgs/FrankaState.h"
 
 
-// Definir un namespace evita conflictos de nombres con otras partes del código o blibliotecas externas
 namespace teleop_franka_joy
 {
 
@@ -47,13 +37,12 @@ namespace teleop_franka_joy
 struct TeleopFrankaJoy::Impl
 {
   // Members functions
-  void printEquilibriumPoseInfo(const geometry_msgs::PoseStamped& equilibrium_pose, const std::string& info_string);
-
+  void printEquilibriumPoseInfo(const geometry_msgs::PoseStamped& equilibrium_pose, const std::string& info_string); // Imprime PoseStamped
   void joyCallback(const sensor_msgs::Joy::ConstPtr& joy); // Función encargada de manejar los mensajes del joystick
-  void sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_position_map); // Función encargada de calcular los valores de PoseStamped
-  void sendCmdOrientationMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_orientation_map);
-  void ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg, float& scale, float& max_vel); // Función encargada de modificar la velocidad
-  void obtainEquilibriumPose(const franka_msgs::FrankaStateConstPtr& msg);
+  void sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_position_map); // Función encargada de calcular Pose.position en función del mando
+  void sendCmdOrientationMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_orientation_map); // Funcion encargada de calcular Pose.orientation
+  void ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg, float& scale, float& max_vel); // Función encargada de modificar la escala de velocidad
+  void obtainEquilibriumPose(const franka_msgs::FrankaStateConstPtr& msg); // Obtiene el equilibrium_pose inicial 
 
   // ROS subscribers and publisher
   ros::Subscriber joy_sub;
@@ -100,9 +89,9 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
   pimpl_->franka_state_sub = nh->subscribe<franka_msgs::FrankaState>("/franka_state_controller/franka_states", 10, &TeleopFrankaJoy::Impl::obtainEquilibriumPose, pimpl_);
 
   // Asignar botones
-  nh_param->param<int>("enable_mov_position", pimpl_->enable_mov_position, 0); // Se obtiene el parámetro del enable_mov_position del servidor de parámetros ROS, por defecto es 0.
+  nh_param->param<int>("enable_mov_position", pimpl_->enable_mov_position, 0); // Se obtiene el parámetro del enable_mov_position del servidor de parámetros ROS, por defecto es 0
   nh_param->param<int>("enable_mov_orientation", pimpl_->enable_mov_orientation, -1);
-  nh_param->param<int>("orientation_button", pimpl_->orientation_button, -1); // Antes 8
+  nh_param->param<int>("orientation_button", pimpl_->orientation_button, -1);
   nh_param->param<int>("home_button", pimpl_->home_button, -1);
 
   nh_param->param<int>("increment_velocity", pimpl_->increment_vel, -1);
@@ -124,12 +113,10 @@ void TeleopFrankaJoy::Impl::printEquilibriumPoseInfo(const geometry_msgs::PoseSt
             equilibrium_pose.pose.orientation.x, equilibrium_pose.pose.orientation.y, equilibrium_pose.pose.orientation.z, equilibrium_pose.pose.orientation.w);
 }
 
-// Obtiene valores específicos del mensaje del joystick
 double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_map, const std::string& fieldname)
 {
   /*
-  Método que obtiene valores especificos del mensaje del joystick:
-  Argumentos:
+  Funcion que obtiene valores especificos del mensaje del joystick:
     - joy_msg: mensaje joy del cual se va a obtener la informacion
     - axis_map: mapa de ejes de control
     - fieldname: campo que se quiere obtener [x,y,z] o [x,y,z,w]
@@ -143,8 +130,8 @@ double getVal(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::str
   return joy_msg->axes[axis_map.at(fieldname)];
 }
 
-// Función para convertir un arreglo float64[16]/double en una matriz de transformación homogénea 4x4
 Eigen::Affine3d convertFloat64ToAffine(const double* data) {
+  // Función para convertir un arreglo float64[16]/double en una matriz de transformación homogénea 4x4
     Eigen::Matrix4d transformation_matrix;
     // Copia los datos del arreglo a la matriz de transformación
     for (int i = 0; i < 4; ++i) {
@@ -198,13 +185,11 @@ void TeleopFrankaJoy::Impl::ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy
     // Modifica la velocidad para una escala determinada
     if (joy_msg->buttons[increment_vel]) {
 
-        //scale = scale*1.2; // Incremento de la escala
         scale = std::min(static_cast<double>(scale * 1.2), static_cast<double>(max_vel));
         ROS_INFO("Velocidad incrementada a %f", scale);
 
     } else if (joy_msg->buttons[decrement_vel]) {
 
-        //scale = std::max(scale/1.2, min_vel); // Decremento de la escala
         scale = std::max(static_cast<double>(scale / 1.2), static_cast<double>(min_vel));
         ROS_INFO("Velocidad decrementada a %f", scale);
 
@@ -222,12 +207,11 @@ void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr&
     increment_position.y = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "y");
     increment_position.z = Delta_t * position_max_vel * getVal(joy_msg, axis_position_map, "z");
 
-    //equilibrium_pose.header.seq++;
     equilibrium_pose.pose.position.x += increment_position.x;
     equilibrium_pose.pose.position.y += increment_position.y;
     equilibrium_pose.pose.position.z += increment_position.z;
 
-    // Aplicamos límites a cada uno de los ejes
+    // Aplicar límites a cada uno de los ejes
     equilibrium_pose.pose.position.x = applyLimits(equilibrium_pose.pose.position.x, -0.81, 0.81);
     equilibrium_pose.pose.position.y = applyLimits(equilibrium_pose.pose.position.y, -0.81, 0.81);
     equilibrium_pose.pose.position.z = applyLimits(equilibrium_pose.pose.position.z, -0.4, 1.15);
@@ -242,7 +226,7 @@ void TeleopFrankaJoy::Impl::sendCmdPositionMsg(const sensor_msgs::Joy::ConstPtr&
 
 void TeleopFrankaJoy::Impl::sendCmdOrientationMsg(const sensor_msgs::Joy::ConstPtr& joy_msg, const std::map<std::string, int>& axis_orientation_map)
   {
-    // ROS usa dos tipos de quaternions que no se peuden mezclar pero si convertir
+    // ROS usa dos tipos de quaternions que no se pueden mezclar pero si convertir
     tf2::Quaternion q_rot;
     tf2::Quaternion q_orig;
     tf2::Quaternion q_new;
