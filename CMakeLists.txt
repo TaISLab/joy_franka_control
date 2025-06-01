@@ -2,12 +2,12 @@ cmake_minimum_required(VERSION 3.0.2)
 project(joy_franka_control)
 
 
-find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp sensor_msgs roslaunch)
+find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp sensor_msgs roslaunch franka_msgs franka_gripper)
 
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}
-  CATKIN_DEPENDS geometry_msgs roscpp sensor_msgs
+  CATKIN_DEPENDS geometry_msgs roscpp sensor_msgs franka_msgs franka_gripper
 )
 
 include_directories(include ${catkin_INCLUDE_DIRS})
