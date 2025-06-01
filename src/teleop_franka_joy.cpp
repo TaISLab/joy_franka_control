@@ -25,6 +25,15 @@ This code is based on the teleop_twist_joy project, available at: http://wiki.ro
 #include "sensor_msgs/Joy.h"
 #include "franka_msgs/FrankaState.h"
 
+// ActionLib para clientes de acción
+#include <actionlib/client/simple_action_client.h>
+#include <actionlib/client/terminal_state.h>
+
+// Headers específicos de las acciones del gripper
+#include <franka_gripper/MoveAction.h>
+#include <franka_gripper/GraspAction.h>
+#include <franka_gripper/StopAction.h>
+
 
 namespace teleop_franka_joy
 {
@@ -44,6 +53,13 @@ struct TeleopFrankaJoy::Impl
   void ModifyVelocity(const sensor_msgs::Joy::ConstPtr& joy_msg, float& scale, float& max_vel); // Función encargada de modificar la escala de velocidad
   void obtainEquilibriumPose(const franka_msgs::FrankaStateConstPtr& msg); // Obtiene el equilibrium_pose inicial 
 
+  // Actions
+  actionlib::SimpleActionClient<franka_gripper::MoveAction>*   gripper_move_client;
+  actionlib::SimpleActionClient<franka_gripper::GraspAction>*  gripper_grasp_client;
+  actionlib::SimpleActionClient<franka_gripper::StopAction>*   gripper_stop_client;
+
+  std::vector<int> prev_buttons;
+  
   // ROS subscribers and publisher
   ros::Subscriber joy_sub;
   ros::Subscriber franka_state_sub; // Obtiene la tf 0_T_EE
@@ -67,6 +83,16 @@ struct TeleopFrankaJoy::Impl
   float position_max_vel;
   float orientation_max_vel; // max_displacement_in_a_second
   float min_vel = 2;
+
+  // Variables para el gripper
+  bool use_franka_gripper;
+  int gripper_open_button;
+  int gripper_close_button;
+
+  float gripper_move_goal;
+  float grasp_goal_width;
+  float grasp_goal_force;
+  float grasp_epsilon;
  
   // Creación de un map de ejes por cada tipo de control:
   std::map<std::string, int> axis_position_map; // Control de posicion
@@ -96,6 +122,8 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 
   nh_param->param<int>("increment_velocity", pimpl_->increment_vel, -1);
   nh_param->param<int>("decrement_velocity", pimpl_->decrement_vel, -1);
+  nh_param->param<int>("gripper_open_button", pimpl_->gripper_open_button, 0);
+  nh_param->param<int>("gripper_close_button", pimpl_->gripper_close_button, 1);
 
   // Asignación de mapas
   nh_param->getParam("axis_position_map", pimpl_->axis_position_map);
@@ -103,6 +131,49 @@ TeleopFrankaJoy::TeleopFrankaJoy(ros::NodeHandle* nh, ros::NodeHandle* nh_param)
 
   nh_param->getParam("position_max_displacement_in_a_second", pimpl_->position_max_vel);
   nh_param->getParam("orientation_max_displacement_in_a_second", pimpl_->orientation_max_vel);
+  
+  // Gripper
+  nh_param->param<bool>("use_franka_gripper", pimpl_->use_franka_gripper, true); // Si se usa el gripper de franka
+  nh_param->param<float>("gripper_move_goal", pimpl_->gripper_move_goal, 0.08); // Apertura por defecto del gripper
+  nh_param->param<float>("grasp_goal_width", pimpl_->grasp_goal_width, 0.03); // Ancho de agarre por defecto
+  nh_param->param<float>("grasp_goal_force", pimpl_->grasp_goal_force, 5.0); // Fuerza de agarre por defecto
+  nh_param->param<float>("grasp_epsilon", pimpl_->grasp_epsilon, 0.005); // Tolerancia de agarre por defecto
+
+
+  // 3) Action clients para el gripper
+  //    – MoveAction para abrir cierre suave
+  //    – GraspAction para agarrar con fuerza
+  //    – StopAction para soltar
+  if (pimpl_->use_franka_gripper) {
+    pimpl_->gripper_move_client = 
+      new actionlib::SimpleActionClient<franka_gripper::MoveAction>(
+          "/franka_gripper/move", /* spin_thread */ false);
+
+    pimpl_->gripper_grasp_client = 
+      new actionlib::SimpleActionClient<franka_gripper::GraspAction>(
+          "/franka_gripper/grasp", false);
+
+    pimpl_->gripper_stop_client = 
+      new actionlib::SimpleActionClient<franka_gripper::StopAction>(
+          "/franka_gripper/stop", false);
+  }
+
+  // // Esperar a que los servidores de acción estén listos
+  // // Usa esto:
+  // ros::Duration timeout(5.0);  // 5 segundos de espera máximo
+  // if (!pimpl_->gripper_move_client->waitForServer(timeout)) {
+  //   ROS_WARN("El servidor /franka_gripper/move no respondió en 5 segundos");
+  // }
+  // if (!pimpl_->gripper_grasp_client->waitForServer(timeout)) {
+  //   ROS_WARN("El servidor /franka_gripper/grasp no respondió en 5 segundos");
+  // }
+  // if (!pimpl_->gripper_stop_client->waitForServer(timeout)) {
+  //   ROS_WARN("El servidor /franka_gripper/stop no respondió en 5 segundos");
+  // }
+
+  // 4) Inicializar estado de botones previos (para detectar bordes ascendentes)
+  pimpl_->prev_buttons.resize(12, 0); 
+  // (asumimos que el joystick tiene 12 botones; ajústalo según tu mando)
 
 }
 
@@ -259,6 +330,8 @@ void TeleopFrankaJoy::Impl::sendCmdOrientationMsg(const sensor_msgs::Joy::ConstP
 
 void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_msg)
 {
+
+  // POSITION/ORIENTATION CONTROL
   if (joy_msg->buttons[enable_mov_position]) //Boton derecho
   {
     ROS_INFO("Boton LB pulsado");
@@ -286,10 +359,10 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
 
     } else if(joy_msg->buttons[home_button]){ // Pto de reposo angular
       
-      equilibrium_pose.pose.orientation.x = 0;
+      equilibrium_pose.pose.orientation.x = 1;
       equilibrium_pose.pose.orientation.y = 0;
       equilibrium_pose.pose.orientation.z = 0;
-      equilibrium_pose.pose.orientation.w = 1;
+      equilibrium_pose.pose.orientation.w = 0;
 
       cmd_PoseStamped_pub.publish(equilibrium_pose);
 
@@ -305,6 +378,32 @@ void TeleopFrankaJoy::Impl::joyCallback(const sensor_msgs::Joy::ConstPtr& joy_ms
 
     // ros::Duration(Delta_t).sleep(); // Prueba: eliminar el temblor
   }
+
+  if (use_franka_gripper) {
+    // GRIPPER CONTROL
+    if(joy_msg->buttons[gripper_open_button] && prev_buttons[gripper_open_button] == 0){
+        ROS_INFO("Abrir garra");
+        franka_gripper::MoveGoal move_goal;
+        move_goal.width = gripper_move_goal;   // 8 cm de apertura
+        move_goal.speed = 0.1;    // 0.1 m/s para apertura suave
+        gripper_move_client->sendGoal(move_goal);
+
+
+    } else if(joy_msg->buttons[gripper_close_button] && prev_buttons[gripper_close_button] == 0){
+        ROS_INFO("Cerrar garra");
+        franka_gripper::GraspGoal grasp_goal;
+        grasp_goal.width = grasp_goal_width;            // 3 cm, ajustado al ancho de la piedra
+        grasp_goal.epsilon.inner = grasp_epsilon;   // tolerancia 5 mm
+        grasp_goal.epsilon.outer = grasp_epsilon;   // tolerancia 5 mm
+        grasp_goal.speed = 0.1;             // 0.1 m/s
+        grasp_goal.force = grasp_goal_force;             // 5 N de fuerza de agarre
+        gripper_grasp_client->sendGoal(grasp_goal);
+    }
+  }
+
+  // 3) Guardar estado actual de los botones para la próxima llamada
+  prev_buttons = joy_msg->buttons;
+
 }
 
 } // namespace teleop_franka_joy

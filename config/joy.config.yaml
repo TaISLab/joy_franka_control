@@ -5,15 +5,14 @@
 axis_position_map: # control de posicion
   x: 1
   y: 0
-  z: 4
+  z: 3
 
 axis_orientation_map: # control de orientacion
-  x: 0
-  y: 1
-  z: 4
+  x: 1
+  y: 0
+  z: 3
 
 # Button mapping
-change_z_button: 0
 enable_mov_position: 4
 enable_mov_orientation: 5
 orientation_button: 9
@@ -21,6 +20,18 @@ home_button: 8
 increment_velocity: 6
 decrement_velocity: 7
 
+# Gripper control
+gripper_open_button: 0
+gripper_close_button: 1
+
+gripper_move_goal: 0.08 # [m], distancia de apertura del gripper
+
+grasp_goal_width: 0.03 # 3cm, ancho del cierre
+grasp_goal_force: 5.0  # [N], fuerza del cierre
+graps_epsilon: 0.005   # [m], tolerancia del tamaño del cierre
+
+
 # Parametros
 position_max_displacement_in_a_second: 12.5
 orientation_max_displacement_in_a_second: 50
+use_franka_gripper: True

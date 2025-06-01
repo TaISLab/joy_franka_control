@@ -22,5 +22,7 @@ int main(int argc, char *argv[])
   ros::NodeHandle nh(""), nh_param("~");
   teleop_franka_joy::TeleopFrankaJoy joy_teleop(&nh, &nh_param);
 
+  ROS_INFO("Nodo teleop_franka_joy iniciado, esperando joystick...");
+
   ros::spin();
 }
